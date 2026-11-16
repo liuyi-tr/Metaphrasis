@@ -1,0 +1,12 @@
+# 运行环境
+.venv/
+__pycache__/
+*.pyc
+
+# 用户自己的文件（含 API Key、翻译内容）
+config.ini
+翻译记录.txt
+运行日志.txt
+保存的译文/
+*.log
+icon.ico
