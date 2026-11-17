@@ -75,16 +75,29 @@ def recognize(img, lang="en"):
 
 
 def _lines_from(result, factor, img):
+    # The engine often takes a perfectly straight screenshot for a tilted one (a few short labels in columns are
+    # enough: about a third of such images, by 1 to 7 degrees). It then reports every box where it would be in the
+    # "straightened" image: up to 10 px low at one edge and high at the other. Screenshots are never tilted, so turn
+    # the boxes back around the image centre.
+    angle = math.radians(result.text_angle or 0)
+    cos, sin = math.cos(angle), math.sin(angle)
+    cx, cy = img.width * factor / 2, img.height * factor / 2
+
+    def straight(r):
+        x, y = r.x + r.width / 2 - cx, r.y + r.height / 2 - cy
+        mx, my = cx + x * cos - y * sin, cy + x * sin + y * cos
+        return mx - r.width / 2, my - r.height / 2, mx + r.width / 2, my + r.height / 2
+
     lines = []
     for line in result.lines:
-        rects = [w.bounding_rect for w in line.words]
+        rects = [straight(w.bounding_rect) for w in line.words]
         text = line.text.strip()
         if not rects or not text:
             continue
-        x0 = max(0, math.floor(min(r.x for r in rects) / factor))
-        y0 = max(0, math.floor(min(r.y for r in rects) / factor))
-        x1 = min(img.width, math.ceil(max(r.x + r.width for r in rects) / factor))
-        y1 = min(img.height, math.ceil(max(r.y + r.height for r in rects) / factor))
+        x0 = max(0, math.floor(min(r[0] for r in rects) / factor))
+        y0 = max(0, math.floor(min(r[1] for r in rects) / factor))
+        x1 = min(img.width, math.ceil(max(r[2] for r in rects) / factor))
+        y1 = min(img.height, math.ceil(max(r[3] for r in rects) / factor))
         if x1 > x0 and y1 > y0:
             lines.append(OcrLine(len(lines), text, (x0, y0, x1, y1)))
     return lines

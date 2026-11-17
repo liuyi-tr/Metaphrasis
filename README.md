@@ -124,6 +124,7 @@ guard.pyw       watchdog: starts the main program, restarts it if it dies
 fanyi.py        main program: tray, hotkey, selection, display
 translator.py   calls the API (Claude / OpenAI-compatible), the anti-refusal layers live here
 render.py       lays the translation back over the original
+gdi_text.py     draws the text with Windows' own renderer, as sharp as the text around it
 ocr_win.py      Windows OCR
 settings.py     config, history
 i18n.py         interface strings in five languages

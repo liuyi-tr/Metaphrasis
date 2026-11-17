@@ -124,6 +124,7 @@ guard.pyw       守护进程，主程序挂了自动拉起
 fanyi.py        主程序：托盘、快捷键、框选、显示
 translator.py   调接口翻译，防误拒那几层在这里
 render.py       把译文排回原来的位置
+gdi_text.py     用 Windows 自己的方式画字，和周围的字一样清楚
 ocr_win.py      Windows OCR
 settings.py     配置、记录
 i18n.py         界面文字的五种语言
