@@ -27,6 +27,7 @@ The same tokens at list prices:
 | Model | Per translation | This month |
 |---|---|---|
 | Claude Fable 5.1 (what I use) | about $0.04 | about $18 |
+| Claude Fable 5.2 | about $0.03 | about $14.4 |
 | Claude Opus 5.5 | about $0.015 | about $7.2 |
 | Claude Sonnet 5.5 (default for new installs) | about $0.008 | about $3.6 |
 | Claude Haiku 5.5 | about $0.0004 | about $0.18 |
@@ -44,13 +45,13 @@ Two ways, pick one.
 2. Download the source (Code → Download ZIP), unzip, double-click `install.bat`. It sets up the dependencies, about a minute.
 3. Double-click `start.bat`.
 
-Either way, the first run creates `config.ini` in the folder. Open it in Notepad, paste your key after `api_key =`, save. It takes effect right away, no restart.
+Either way, the next step is the key. Right-click the tray icon, open **API provider**, click your provider and paste the key into the box that comes up. It is written to `config.ini` in the program folder and takes effect right away, no restart. Editing `config.ini` in Notepad works too: paste the key after `api_key =`.
 
-The default is Claude. For anything else, set `provider` to `openai` and fill in `base_url` and `model`; the file lists common endpoints and model names (ChatGPT, DeepSeek, Qwen, Kimi, GLM, Gemini, local Ollama).
+The default provider is Claude. ChatGPT, DeepSeek, Qwen, Kimi, GLM, Gemini and a local Ollama are in the same menu, and **Custom endpoint** takes any other address that speaks the OpenAI format. More on this under [Provider, model and thinking effort](#provider-model-and-thinking-effort).
 
 `target_language` defaults to Chinese. Write any language there, English, 日本語, 한국어, or pick one from the tray menu; the source can be anything, including Chinese. English runs about twice as long as Chinese, so Chinese-to-English overlays come out in smaller type; popup mode doesn't have that problem.
 
-Models that can't take images, such as DeepSeek's main model, still work: the tool sends text only. But then Japanese and Korean won't translate, because that text comes from the Windows OCR engines for English and Chinese.
+Models that can't take images still work: the tool notices and sends text only. But then Japanese and Korean won't translate, because that text comes from the Windows OCR engines for English and Chinese.
 
 The interface language follows Windows by default; the tray menu switches between English, Simplified Chinese, Traditional Chinese, Japanese and Korean. The explanations inside the config file come in Chinese and English and follow the interface language.
 
@@ -70,9 +71,40 @@ In popup mode the translation is plain text in a window, already on the clipboar
 
 <p align="center"><img src="docs/popup.png" width="480"></p>
 
-Right-click the tray icon for: display mode, target language, interface language, open the config file, open the history, start with Windows, quit.
+Right-click the tray icon for: display mode, target language, interface language, API provider, model, thinking effort, open the config file, open the history, start with Windows, quit.
 
 If the selection is already in the target language, no API call is made.
+
+## Provider, model and thinking effort
+
+All three are in the tray menu, and they are set up in that order: provider first, then its key, and only then model and effort. Until the provider in use has a key, **Model** and **Thinking effort** stay greyed out.
+
+<p align="center"><img src="docs/tray_api.png" width="860"></p>
+
+**API provider.** A name that ends in … has no key yet. Clicking it asks for the key first, and nothing changes until you save; cancel and you are where you were. A provider that already has a key is switched to at once. **Change API key…** at the bottom replaces the key of the provider in use, which is what you want when a key expires.
+
+<p align="center"><img src="docs/key_dialog.png" width="380"></p>
+
+The key is shown as dots unless you tick Show, so a screenshot of the box does not give it away. Each provider keeps its own key, model and effort in `config.ini`. Switching puts the outgoing provider's settings aside and brings the incoming one's back, so a key is never sent to a company it does not belong to.
+
+**Model.** Claude has a fixed list of five. For the other providers the list is asked of the provider itself once its key is saved (a free request), so it shows what your account can actually use. If the model you want is not listed, type its name after `model =` in `config.ini`.
+
+**Thinking effort.** How long the model reasons before it answers: more is slower and costs more, and for a few lines of interface text the lowest setting is enough. Every provider has its own choices, because every API does this differently:
+
+| Provider | Choices |
+|---|---|
+| Claude | Low, Medium, High, Very high, Maximum |
+| ChatGPT | Default, Thinking off, Low, Medium, High, Very high, Maximum |
+| DeepSeek | Default, Thinking off, Low, High, Maximum |
+| Qwen | Default, Thinking off, Thinking on, Low, High, Very high |
+| Kimi | Default, Low, High, Maximum |
+| GLM | Default, Thinking off, Low, High, Maximum |
+| Gemini | Default, Minimal, Low, Medium, High, Very high |
+| Ollama | Default, Thinking off, Low, Medium, High |
+
+Default sends nothing and leaves it to the model. Some providers have no off switch because their current models always think. Within one provider, older and newer models do not accept the same choices; if a model turns a setting down, the request is sent again without it, so the translation still arrives, at that model's default.
+
+I only have a Claude key, so Claude is the only provider tested against the real service. The others follow each company's API documentation as of November 2026 and were checked against a local stand-in. If one of them misbehaves for you, please open an issue.
 
 ## Japanese and other languages
 
@@ -107,7 +139,7 @@ Hotkey registration failed: another program has that combination. Change it unde
 
 Can't connect: if you need a proxy, set `proxy` in `config.ini`, for example `http://127.0.0.1:7890`.
 
-Key expired: keys created in the Claude Console expire after 30 days by default, pick Never when creating one. Paste the new key into `config.ini`, no restart needed.
+Key expired: keys created in the Claude Console expire after 30 days by default, pick Never when creating one. To put in a new key, right-click the tray icon, **API provider** → **Change API key…**; no restart needed.
 
 The program is gone: if there is no tray icon, double-click `start.bat` again. If something else killed it, `guard.pyw` brings it back within a few seconds.
 

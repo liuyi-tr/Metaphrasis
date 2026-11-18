@@ -209,6 +209,8 @@ def _stream(client, params, on_text):
 _openai_clients = {}
 _vision_known = {}  # (base_url, model) -> can the model see images (auto-detected)
 _rf_known = {}  # base_url -> does the endpoint accept response_format
+_think_rejected = set()  # (base_url, model, effort): thinking settings a model turned down
+_tokens_key = {}  # (base_url, model) -> name of the output-limit parameter, when it is not max_tokens
 JSON_NOTE = ('\n\n输出格式：只输出一个 JSON 对象，不要任何多余文字，不要 Markdown 代码块。格式：\n'
              '{"blocks": [{"line_ids": [行编号, ...], "translation": "译文"}, ...]}')
 
@@ -232,9 +234,12 @@ def _openai_client(cfg):
     return _openai_clients[key]
 
 
+_THINK_TAG = re.compile(r"^\s*<think>.*?(?:</think>|$)", re.S)
+
+
 def _strip_fences(text):
-    """Some models wrap the JSON in ```json or prepend a sentence: keep from the first { on."""
-    t = text.strip()
+    """Some models wrap the JSON in ```json or prepend a sentence: keep from the first { on. A few write their thinking into the answer inside <think> tags: drop that first."""
+    t = _THINK_TAG.sub("", text).strip()
     if t.startswith("```"):
         t = t.split("\n", 1)[1] if "\n" in t else t[3:]
     if t.endswith("```"):
@@ -278,19 +283,28 @@ def _call_openai(cfg, params, on_text):
     else:
         with_image = has_image and _vision_known.get((cfg.base_url, cfg.model), True)
     use_rf = _rf_known.get(cfg.base_url, True)
-    for _ in range(3):
-        body = {"model": params["model"], "stream": True, "max_tokens": min(int(params.get("max_tokens", 4096)), 8192),
-                "messages": _to_openai_messages(params, with_image)}
+    # the thinking setting chosen in the tray menu, in this company's own parameters ({} = say nothing)
+    company, effort = getattr(cfg, "company", ""), getattr(cfg, "effort", "")
+    think = {} if (cfg.base_url, params["model"], effort) in _think_rejected else settings.thinking_body(company, effort)
+    limit = min(int(params.get("max_tokens", 4096)), settings.MAX_OUTPUT.get(company, 8192))
+    dropped = False  # the thinking setting was taken out after a rejection
+    for _ in range(6):
+        body = {"model": params["model"], "stream": True, "messages": _to_openai_messages(params, with_image),
+                _tokens_key.get((cfg.base_url, params["model"]), "max_tokens"): limit}
         if use_rf:
             body["response_format"] = {"type": "json_object"}
+        body.update(think)
         try:
             with client.stream("POST", url, json=body, headers=headers) as r:
                 if r.status_code >= 400:
                     detail = r.read().decode("utf-8", "replace")
                     low = detail.lower()
-                    if r.status_code in (400, 422) and use_rf and "response_format" in low:
-                        _rf_known[cfg.base_url] = False
+                    if r.status_code in (400, 422) and use_rf and any(k in low for k in ("response_format", "json mode", "json_object")):
+                        _rf_known[cfg.base_url] = False  # some models also refuse JSON mode while they think; the prompt still asks for JSON
                         use_rf = False
+                        continue
+                    if r.status_code in (400, 422) and "max_tokens" in body and "max_completion_tokens" in low:
+                        _tokens_key[(cfg.base_url, params["model"])] = "max_completion_tokens"  # newer reasoning models renamed it
                         continue
                     if r.status_code in (400, 422) and with_image and cfg.vision == "auto" and any(
                             k in low for k in ("image", "vision", "multimodal", "content type")):
@@ -298,7 +312,14 @@ def _call_openai(cfg, params, on_text):
                         with_image = False
                         log.info("This model does not accept images; sending OCR text only")
                         continue
+                    if r.status_code in (400, 422) and think:
+                        # not every model of a company takes every thinking setting: send the request once more without it
+                        think, dropped = {}, True
+                        log.info("The request was rejected with a thinking setting; sending without it")
+                        continue
                     raise _http_error(r.status_code, detail, cfg)
+                if dropped:  # it went through without the setting, so the setting was the problem: do not try it on this model again
+                    _think_rejected.add((cfg.base_url, params["model"], effort))
                 text, finish = "", None
                 for line in r.iter_lines():
                     if not line.startswith("data:"):
@@ -324,6 +345,34 @@ def _call_openai(cfg, params, on_text):
         except httpx2.HTTPError as e:
             raise TranslateError(t("连不上接口 {url}：{e}", url=cfg.base_url, e=e), True) from e
     raise TranslateError(t("接口反复拒绝请求，请检查 config.ini 里的 base_url 和 model。"), True)
+
+
+_NOT_CHAT = ("embed", "tts", "whisper", "dall-e", "audio", "image", "moderation", "rerank", "realtime", "transcri",
+             "speech", "video", "sora", "davinci", "babbage")  # names of models that cannot translate text
+
+
+def list_models(cfg, limit=40):
+    """Model names an OpenAI-compatible endpoint offers, for the tray menu (a free request): chat models only, sorted."""
+    try:
+        r = _openai_client(cfg).get(cfg.base_url.rstrip("/") + "/models",
+                                    headers={"Authorization": f"Bearer {cfg.api_key}"}, timeout=15.0)
+    except httpx2.TimeoutException as e:
+        raise TranslateError(t("连接接口超时，请检查网络（必要时在 config.ini 里设置 proxy）。")) from e
+    except httpx2.HTTPError as e:
+        raise TranslateError(t("连不上接口 {url}：{e}", url=cfg.base_url, e=e), True) from e
+    if r.status_code >= 400:
+        raise _http_error(r.status_code, r.text, cfg)
+    try:
+        data = r.json()
+    except ValueError:
+        data = None
+    items = data.get("data") or data.get("models") if isinstance(data, dict) else data
+    names = []
+    for item in items if isinstance(items, list) else []:
+        name = (item.get("id") or item.get("name")) if isinstance(item, dict) else item
+        if isinstance(name, str) and name and not any(word in name.lower() for word in _NOT_CHAT):
+            names.append(name)
+    return sorted(set(names))[:limit]
 
 
 def _call(cfg, params, on_text):

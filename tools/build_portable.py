@@ -16,7 +16,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 PYVER = "3.14.7"
 EMBED_NAME = f"python-{PYVER}-embed-amd64.zip"
 EMBED_SHA256 = "d297e5ff019966817ad8502465176139f2d3d840fa4ed84b13bed399a6ab1f15"  # of the file served by python.org

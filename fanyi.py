@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
-from tkinter import filedialog
+from tkinter import filedialog, ttk
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFont, ImageGrab, ImageTk
 
@@ -640,6 +640,130 @@ class TextPopup:
                 callback()
 
 
+EFFORT_LABELS = {"": "默认", "off": "关闭思考", "on": "开启思考", "minimal": "极低", "low": "低", "medium": "中",
+                 "high": "高", "xhigh": "很高", "max": "最高"}  # "" = say nothing, the model's own default
+
+
+def model_label(model):
+    """"claude-sonnet-5-5" -> "Claude Sonnet 5.5"; names of other companies' models are shown as they are."""
+    m = re.fullmatch(r"claude-([a-z]+)-(\d+)-(\d+)", model)
+    return f"Claude {m.group(1).capitalize()} {m.group(2)}.{m.group(3)}" if m else model
+
+
+class KeyDialog:
+    """Small card that takes a company's API key (and, for a custom endpoint, its address).
+
+    The key is shown as dots unless "show" is ticked, so a screenshot of the dialog does not give it away. It goes straight into config.ini; it is never logged.
+    """
+
+    def __init__(self, app, company, adding, on_save, url=""):
+        self.app, self.company, self.on_save = app, company, on_save
+        self.alive = True
+        self._drag = None
+        name = settings.company_name(company)
+        win = self.win = tk.Toplevel(app.root)
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
+        win.configure(bg=POPUP_BORDER)
+        card = tk.Frame(win, bg="white")
+        card.pack(fill="both", expand=True, padx=1, pady=1)
+
+        header = tk.Frame(card, bg="white")
+        header.pack(fill="x", padx=(20, 10), pady=(10, 0))
+        title = tk.Label(header, text=t("添加 API Key · {name}", name=name) if adding else t("更换 API Key · {name}", name=name),
+                         bg="white", fg="#111827", font=(UI_FONT, 10, "bold"))
+        title.pack(side="left", pady=2)
+        close = tk.Label(header, text="✕", bg="white", fg="#9CA3AF", font=(UI_FONT, 11), cursor="hand2", padx=8)
+        close.pack(side="right")
+        close.bind("<Enter>", lambda e: close.configure(fg="#111827"))
+        close.bind("<Leave>", lambda e: close.configure(fg="#9CA3AF"))
+        close.bind("<Button-1>", lambda e: self.close())
+        for w in (header, title):
+            w.bind("<ButtonPress-1>", self._drag_start)
+            w.bind("<B1-Motion>", self._drag_move)
+
+        body = tk.Frame(card, bg="white")
+        body.pack(fill="both", expand=True, padx=20, pady=(8, 2))
+
+        def entry(var, **kw):
+            """A one-line input in a thin border that turns blue while it has the focus."""
+            box = tk.Frame(body, bg="white", highlightthickness=1, highlightbackground="#D1D5DB")
+            field = tk.Entry(box, textvariable=var, width=46, font=("Consolas", 10), relief="flat", bd=0, bg="white",
+                             fg="#111827", insertbackground="#111827", highlightthickness=0, **kw)
+            field.pack(fill="x", padx=8, pady=6)
+            field.bind("<FocusIn>", lambda e: box.configure(highlightbackground=ACCENT))
+            field.bind("<FocusOut>", lambda e: box.configure(highlightbackground="#D1D5DB"))
+            return box, field
+
+        self.url = tk.StringVar(value=url)
+        self.key = tk.StringVar()
+        self.show = tk.BooleanVar(value=False)
+        message = tk.Label(body, text=t("把 {name} 的 API Key 粘贴到下面。\n它只保存在这台电脑的 config.ini 里。", name=name),
+                           bg="white", fg="#374151", font=(UI_FONT, 10), justify="left", anchor="w")
+        message.pack(fill="x", pady=(0, 8))
+        first = None
+        if company == "custom":
+            tk.Label(body, text=t("接口地址（以 https:// 开头，一般以 /v1 结尾）"), bg="white", fg="#6B7280",
+                     font=(UI_FONT, 9), anchor="w").pack(fill="x")
+            box, first = entry(self.url)
+            box.pack(fill="x", pady=(2, 8))
+            tk.Label(body, text="API Key", bg="white", fg="#6B7280", font=(UI_FONT, 9), anchor="w").pack(fill="x")
+        key_box, self.key_entry = entry(self.key, show="•")
+        key_box.pack(fill="x", pady=(2, 6))
+        style = ttk.Style(win)
+        style.configure("Key.TCheckbutton", background="white", font=(UI_FONT, 9))
+        ttk.Checkbutton(body, text=t("显示"), variable=self.show, style="Key.TCheckbutton", takefocus=False,
+                        command=lambda: self.key_entry.configure(show="" if self.show.get() else "•")).pack(anchor="w")
+        self.error = tk.Label(body, text="", bg="white", fg=ERROR_FG, font=(UI_FONT, 9), justify="left", anchor="w")
+        self.error.pack(fill="x", pady=(4, 0))
+
+        bottom = tk.Frame(card, bg="white")
+        bottom.pack(fill="x", padx=(20, 14), pady=(4, 12))
+        flat_button(bottom, t("保存"), self.save, primary=True).pack(side="right", padx=(6, 0), pady=2)
+        flat_button(bottom, t("取消"), self.close).pack(side="right", padx=6, pady=2)
+        bottom.bind("<ButtonPress-1>", self._drag_start)
+        bottom.bind("<B1-Motion>", self._drag_move)
+        win.bind("<Return>", lambda e: self.save())
+        win.bind("<Escape>", lambda e: self.close())
+        win.protocol("WM_DELETE_WINDOW", self.close)
+        win.update_idletasks()
+        for label in (message, self.error):
+            label.configure(wraplength=key_box.winfo_reqwidth())
+        app.place_beside(win, None)
+        _round_corners(win)
+        app.focus(win)
+        (first if first is not None and not url else self.key_entry).focus_set()
+
+    def _drag_start(self, e):
+        self._drag = (e.x_root - self.win.winfo_x(), e.y_root - self.win.winfo_y())
+
+    def _drag_move(self, e):
+        if self._drag:
+            self.win.geometry(f"+{e.x_root - self._drag[0]}+{e.y_root - self._drag[1]}")
+
+    def save(self):
+        key = self.key.get().strip()
+        url = self.url.get().strip().rstrip("/")
+        problem = None
+        if self.company == "custom":
+            problem = settings.url_problem(url) if url else t("还没有填写接口地址。")
+        if not problem:
+            if not key:
+                problem = t("还没有粘贴 API Key。")
+            elif any(c.isspace() or not c.isascii() for c in key):
+                problem = t("API Key 里有空格或中文字符，请检查是否粘贴完整。")
+        if problem:
+            self.error.configure(text=problem)
+            return
+        self.close()
+        self.on_save(key, url if self.company == "custom" else None)
+
+    def close(self):
+        if self.alive:
+            self.alive = False
+            self.win.destroy()
+
+
 class App:
     def __init__(self):
         self.cfg = settings.load_config()
@@ -663,6 +787,8 @@ class App:
         self.labels = {}
         self.hotkeys = None
         self.tray = None
+        self.models = {}  # company -> model names fetched from its API, or "loading" / "failed"
+        self.key_dialog = None
 
     # ---------- startup / shutdown ----------
     def run(self):
@@ -711,12 +837,57 @@ class App:
         self.hotkeys = winapi.HotkeyThread(bindings, self.events)
         self.hotkeys.start()
 
-    def _build_menu(self):
+    def _act(self, name):
+        return lambda icon, it: self.events.put(("tray", name))
+
+    def _has_key(self):
+        return bool(self.cfg.api_key)
+
+    def _company_items(self):
+        """The companies; one that has no key on file yet ends in … because picking it asks for the key first."""
+        import pystray
+        ready = settings.saved_companies() | ({self.cfg.company} if self._has_key() else set()) | {"ollama"}
+        items = [pystray.MenuItem(settings.company_name(cid) + ("" if cid in ready else " …"), self._act("company:" + cid),
+                                  checked=(lambda it, c=cid: self.cfg.company == c), radio=True)
+                 for cid, _, _ in settings.COMPANIES]
+        return items + [pystray.Menu.SEPARATOR, pystray.MenuItem(t("更换 API Key…"), self._act("change_key"))]
+
+    def _model_items(self):
         import pystray
         item = pystray.MenuItem
 
-        def act(name):
-            return lambda icon, it: self.events.put(("tray", name))
+        def choices(names):
+            return [item(model_label(m), self._act("model:" + m), checked=(lambda it, m=m: self.cfg.model == m), radio=True)
+                    for m in names]
+
+        cfg = self.cfg
+        if cfg.provider == "claude":
+            return choices(list(settings.SUPPORTED_MODELS) + ([] if cfg.model in settings.SUPPORTED_MODELS else [cfg.model]))
+        state = self.models.get(cfg.company)
+        if state is None and self._has_key():
+            self._fetch_models()
+            state = self.models.get(cfg.company)
+        names = list(state) if isinstance(state, list) else []
+        if cfg.model and cfg.model not in names:
+            names.insert(0, cfg.model)
+        items = choices(names)
+        if state == "loading":
+            items.append(item(t("正在获取模型列表…"), lambda icon, it: None, enabled=False))
+        elif state == "failed":
+            items.append(item(t("获取模型列表失败，点这里重试"), self._act("refresh_models")))
+        else:
+            items += [pystray.Menu.SEPARATOR, item(t("刷新模型列表"), self._act("refresh_models"))]
+        return items + [item(t("手动填写模型名（打开配置文件）"), self._act("open_config"))]
+
+    def _effort_items(self):
+        import pystray
+        return [pystray.MenuItem(t(EFFORT_LABELS[e]), self._act("effort:" + e), checked=(lambda it, e=e: self.cfg.effort == e), radio=True)
+                for e in settings.thinking_levels(self.cfg.company)]  # every company has its own choices
+
+    def _build_menu(self):
+        import pystray
+        item = pystray.MenuItem
+        act = self._act
 
         def lang_items(kind, is_current):  # language names are written in their own language, not translated
             return [item(name, act(f"{kind}:{code}"), checked=(lambda it, c=code: is_current(c)), radio=True)
@@ -732,6 +903,12 @@ class App:
             )),
             item(lambda it: t("译文语言"), pystray.Menu(*lang_items("target", lambda c: settings.lang_code(self.cfg.target_language) == c))),
             item(lambda it: t("界面语言"), pystray.Menu(*lang_items("ui", lambda c: i18n.current() == c))),
+            pystray.Menu.SEPARATOR,
+            # the order one sets things up in: company first, then its key, and only then model and effort
+            item(lambda it: t("接口公司"), pystray.Menu(self._company_items)),
+            item(lambda it: t("模型"), pystray.Menu(self._model_items), enabled=lambda it: self._has_key()),
+            item(lambda it: t("思考强度"), pystray.Menu(self._effort_items),
+                 enabled=lambda it: self._has_key() and len(settings.thinking_levels(self.cfg.company)) > 1),
             pystray.Menu.SEPARATOR,
             item(lambda it: t("打开配置文件（API Key、模型）"), act("open_config")),
             item(lambda it: t("打开翻译记录"), act("open_history")),
@@ -803,6 +980,18 @@ class App:
             self.set_target_language(name[7:])
         elif name.startswith("ui:"):
             self.set_ui_language(name[3:])
+        elif name.startswith("company:"):
+            self.pick_company(name[8:])
+        elif name.startswith("model:"):
+            self.set_api_value("model", name[6:], t("模型：{name}", name=model_label(name[6:])))
+        elif name.startswith("effort:"):
+            self.set_api_value("effort", name[7:], t("思考强度：{name}", name=t(EFFORT_LABELS[name[7:]])))
+        elif name == "change_key":
+            self.ask_key(self.cfg.company)
+        elif name == "refresh_models":
+            self._fetch_models(force=True)
+            if self.tray:
+                self.tray.update_menu()
         elif name == "open_config":
             self.open_file(settings.CONFIG_PATH)
         elif name == "open_history":
@@ -829,6 +1018,87 @@ class App:
             log.exception("Changing the startup setting failed")
             msg = t("设置开机自动启动失败：{e}", e=e)
         self.events.put(("call", lambda: (self.toast(msg), self.tray and self.tray.update_menu())))
+
+    # ---------- API company, key, model, effort ----------
+    def _reload(self):
+        """Read config.ini again after a change made from the tray, and redraw the menu."""
+        try:
+            self.cfg = settings.load_config()
+        except settings.ConfigError as e:
+            self.show_error(str(e), open_config=True)
+        if self.tray:
+            self.tray.update_menu()
+
+    def set_api_value(self, key, value, message):
+        try:
+            settings.set_api_value(key, value)
+        except OSError as e:
+            self.show_error(t("打不开 {path}：{e}", path=settings.CONFIG_PATH, e=e))
+            return
+        self._reload()
+        self.toast(message)
+
+    def pick_company(self, company):
+        """A company with a key on file is switched to at once; any other first asks for its key, and the switch happens when the key is saved."""
+        if company == self.cfg.company:
+            if not self._has_key():  # a fresh install: the company is already Claude, only its key is missing
+                self.ask_key(company)
+            elif self.tray:
+                self.tray.update_menu()
+        elif company == "ollama" or company in settings.saved_companies():
+            self._use_company(company)
+        else:
+            self.ask_key(company)
+
+    def ask_key(self, company):
+        if self.key_dialog and self.key_dialog.alive:
+            self.key_dialog.close()
+        current = company == self.cfg.company
+        self.key_dialog = KeyDialog(self, company, adding=not (current and self._has_key()),
+                                    on_save=lambda key, url: self._use_company(company, key, url),
+                                    url=self.cfg.base_url if current and company == "custom" else "")
+        if self.tray:
+            self.tray.update_menu()  # the radio mark goes back to the company in use until the key is saved
+
+    def _use_company(self, company, api_key=None, base_url=None):
+        same = company == self.cfg.company  # then only its key (or address) changes
+        try:
+            settings.switch_company(company, api_key=api_key, base_url=base_url)
+        except OSError as e:
+            self.show_error(t("打不开 {path}：{e}", path=settings.CONFIG_PATH, e=e))
+            return
+        self.models.pop(company, None)
+        self._reload()
+        self.toast(t("已保存 API Key") if same else t("接口公司：{name}", name=settings.company_name(company)))
+        self._fetch_models(force=True)
+
+    def _fetch_models(self, force=False):
+        """Ask the company in use which models it has (a free request), in the background. Claude's list is fixed."""
+        cfg = self.cfg
+        company = cfg.company
+        if cfg.provider == "claude" or not cfg.api_key or (not force and self.models.get(company) is not None):
+            return
+        self.models[company] = "loading"
+
+        def work():
+            try:
+                import translator
+                names = translator.list_models(cfg)
+            except Exception as e:
+                log.info("Model list of %s failed: %s", company, type(e).__name__)
+                names = None
+            self.events.put(("call", lambda: self._models_ready(company, names)))
+        threading.Thread(target=work, name="models", daemon=True).start()
+
+    def _models_ready(self, company, names):
+        self.models[company] = "failed" if names is None else names
+        if company == self.cfg.company and names and not self.cfg.model:
+            if len(names) == 1:  # nothing to choose
+                self.set_api_value("model", names[0], t("模型：{name}", name=names[0]))
+                return
+            self.toast(t("请在托盘菜单的“模型”里选一个模型"))
+        if self.tray:
+            self.tray.update_menu()
 
     def set_target_language(self, code):
         """Target language picked from the tray: write it to config.ini; applies from the next translation."""
@@ -866,11 +1136,18 @@ class App:
         except settings.ConfigError as e:
             self.show_error(str(e), open_config=True)
             return None
+        changed = (cfg.company, cfg.model, cfg.effort, cfg.api_key) != (self.cfg.company, self.cfg.model, self.cfg.effort, self.cfg.api_key)
         self.cfg = cfg  # tray check marks follow the config file
         self._apply_ui_language(i18n.resolve(cfg.ui_language))
+        if changed and self.tray:
+            self.tray.update_menu()
         problem = settings.api_key_problem(cfg)
         if problem:
             self.show_error(problem, open_config=True, title=t("截图翻译 · 需要设置 API Key"))
+            return None
+        problem = settings.model_problem(cfg)
+        if problem:
+            self.show_error(problem)
             return None
         # connect to the server while the user is still dragging the selection
         threading.Thread(target=self._prewarm, args=(cfg,), name="prewarm", daemon=True).start()
