@@ -13,6 +13,7 @@ import i18n
 import redact
 from i18n import t
 
+VERSION = "1.0.3"  # shown in the tray menu; tools/build_portable.py names the zip after it
 APP_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = APP_DIR / "config.ini"
 HISTORY_PATH = APP_DIR / "翻译记录.txt"

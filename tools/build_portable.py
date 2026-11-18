@@ -9,6 +9,7 @@ bytecode writing off, and any __pycache__ is removed before zipping (.pyc files 
 """
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -16,7 +17,6 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-VERSION = "1.0.2"
 PYVER = "3.14.7"
 EMBED_NAME = f"python-{PYVER}-embed-amd64.zip"
 EMBED_SHA256 = "d297e5ff019966817ad8502465176139f2d3d840fa4ed84b13bed399a6ab1f15"  # of the file served by python.org
@@ -24,6 +24,8 @@ EMBED_URLS = (f"https://www.python.org/ftp/python/{PYVER}/{EMBED_NAME}",
               f"https://registry.npmmirror.com/-/binary/python/{PYVER}/{EMBED_NAME}")  # mirror; verified by the hash above
 
 REPO = Path(__file__).resolve().parent.parent
+# the version is written in one place, settings.py, where the program shows it from
+VERSION = re.search(r'^VERSION = "([^"]+)"', (REPO / "settings.py").read_text(encoding="utf-8"), re.M).group(1)
 DIST = REPO.parent / "dist"
 OUT = DIST / f"Metaphrasis-{VERSION}-win64"
 PY = OUT / "python"

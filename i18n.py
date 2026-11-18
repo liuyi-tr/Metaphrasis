@@ -113,6 +113,7 @@ STRINGS = {
     "打开配置文件（API Key、模型）": {"zh-tw": "開啟設定檔（API Key、模型）", "en": "Open config file (API key, model)", "ja": "設定ファイルを開く（API キー・モデル）", "ko": "설정 파일 열기(API 키, 모델)"},
     "打开翻译记录": {"zh-tw": "開啟翻譯記錄", "en": "Open translation history", "ja": "翻訳履歴を開く", "ko": "번역 기록 열기"},
     "打开工具所在文件夹": {"zh-tw": "開啟工具所在資料夾", "en": "Open program folder", "ja": "プログラムのフォルダーを開く", "ko": "프로그램 폴더 열기"},
+    "版本 {version}": {"zh-tw": "版本 {version}", "en": "Version {version}", "ja": "バージョン {version}", "ko": "버전 {version}"},
     "开机自动启动": {"zh-tw": "開機自動啟動", "en": "Start with Windows", "ja": "Windows 起動時に実行", "ko": "Windows 시작 시 실행"},
     "退出": {"zh-tw": "結束", "en": "Quit", "ja": "終了", "ko": "종료"},
     "还没有翻译记录": {"zh-tw": "還沒有翻譯記錄", "en": "No translation history yet", "ja": "翻訳履歴はまだありません", "ko": "아직 번역 기록이 없습니다"},

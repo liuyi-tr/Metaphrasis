@@ -800,7 +800,7 @@ class App:
             self.root.after(800, lambda: self.show_error(problem, open_config=True,
                                                          title=t("截图翻译 · 需要设置 API Key")))
         self.root.after(30, self._poll)
-        log.info("Started: model %s, mode %s, hotkeys %s", self.cfg.model, self.mode, self.labels)
+        log.info("Started: version %s, model %s, mode %s, hotkeys %s", settings.VERSION, self.cfg.model, self.mode, self.labels)
         self.root.mainloop()
 
     def quit(self):
@@ -914,6 +914,7 @@ class App:
             item(lambda it: t("打开翻译记录"), act("open_history")),
             item(lambda it: t("打开工具所在文件夹"), act("open_folder")),
             pystray.Menu.SEPARATOR,
+            item(lambda it: t("版本 {version}", version=settings.VERSION), lambda icon, it: None, enabled=False),
             item(lambda it: t("开机自动启动"), act("autostart"), checked=lambda it: autostart.is_enabled()),
             item(lambda it: t("退出"), act("quit")),
         )

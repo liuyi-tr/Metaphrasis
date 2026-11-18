@@ -141,6 +141,8 @@ Can't connect: if you need a proxy, set `proxy` in `config.ini`, for example `ht
 
 Key expired: keys created in the Claude Console expire after 30 days by default, pick Never when creating one. To put in a new key, right-click the tray icon, **API provider** → **Change API key…**; no restart needed.
 
+Which version am I running: right-click the tray icon; it is the grey line near the bottom of the menu.
+
 The program is gone: if there is no tray icon, double-click `start.bat` again. If something else killed it, `guard.pyw` brings it back within a few seconds.
 
 ## Limitations

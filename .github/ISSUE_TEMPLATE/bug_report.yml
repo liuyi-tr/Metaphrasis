@@ -1,0 +1,59 @@
+name: Something is wrong / 报告问题
+description: The translation is wrong, misplaced, missing, or the program misbehaves. 译文不对、位置不对、没出来，或者程序本身出了问题。
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. English or Chinese, whichever is easier.
+        感谢反馈，中文英文都可以。
+
+        **Never paste your API key here.** If a screenshot shows a key or anything private, cover it first.
+        **不要把 API Key 贴在这里。** 截图里有密钥或隐私内容的话，请先打码。
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect? / 发生了什么，你原本期望是什么？
+      description: A screenshot of the result next to the original helps more than anything else. Drag images straight into this box. 原文和结果各一张截图最有用，图片可以直接拖进这个框。
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / 版本
+      description: Right-click the tray icon; the grey line near the bottom. 右键托盘图标，靠下那行灰色的字。
+      placeholder: "1.0.3"
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: API provider / 接口公司
+      options:
+        - Claude
+        - ChatGPT
+        - DeepSeek
+        - Qwen / 通义千问
+        - Kimi
+        - GLM / 智谱
+        - Gemini
+        - Ollama
+        - Custom endpoint / 自定义接口
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model and thinking effort / 模型和思考强度
+      description: As shown in the tray menu. 托盘菜单里显示的。
+      placeholder: "Claude Sonnet 5.5, Low"
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version and display scaling / Windows 版本和缩放比例
+      placeholder: "Windows 11, 150%"
+  - type: textarea
+    id: log
+    attributes:
+      label: Log / 运行日志
+      description: The last lines of 运行日志.txt in the program folder, if there was an error. It holds timings and error messages, never the text you translated. 如果有报错，贴上程序文件夹里 运行日志.txt 的最后几行。里面只有耗时和报错，没有你翻译的内容。
+      render: text
