@@ -26,13 +26,14 @@ SUPPORTED_MODELS = ("claude-sonnet-5-5", "claude-haiku-5-5", "claude-opus-5-5", 
 DEFAULT_MODEL = "claude-sonnet-5-5"
 # How hard to think, per company: the choices the tray menu offers, in order, and what each one adds to the request.
 # Claude takes EFFORTS (output_config.effort). For every other company the first choice is "" = say nothing and let the
-# model use its own default; the entries here come from each company's API documentation (looked up 2026-11-18).
+# model use its own default; the entries here come from each company's API documentation (looked up 2026-11-25).
 def _effort(level):
     return {"reasoning_effort": level}
 
 
 THINKING = {
     # developers.openai.com/api/docs/guides/reasoning : which of these a model takes depends on its generation
+    # (the GPT-6.2 models refuse "none": see thinking_fallback)
     "chatgpt": {"off": _effort("none"), "low": _effort("low"), "medium": _effort("medium"), "high": _effort("high"),
                 "xhigh": _effort("xhigh"), "max": _effort("max")},
     # api-docs.deepseek.com/guides/thinking_mode : thinking is on by default, at "high"
@@ -42,17 +43,22 @@ THINKING = {
              "xhigh": _effort("xhigh")},
     # platform.kimi.com/docs/guide/use-reasoning-effort : K3 models always think, at "max" by default
     "kimi": {"low": _effort("low"), "high": _effort("high"), "max": _effort("max")},
-    # docs.bigmodel.cn/cn/guide/capabilities/thinking : on by default at "max"; the levels need GLM-5.2 or later
+    # docs.bigmodel.cn/cn/guide/capabilities/thinking : on by default at "max"; the levels need GLM-5.2 or later, and
+    # the GLM-5.3 models cannot stop thinking
     "glm": {"off": {"thinking": {"type": "disabled"}}, "low": _effort("low"), "high": _effort("high"), "max": _effort("max")},
+    # cloud.tencent.com/document/product/1823/135872 : hy4 thinks by default, at "high"
+    "hunyuan": {"off": {"thinking": {"type": "disabled"}}, "low": _effort("low"), "medium": _effort("medium"), "high": _effort("high")},
     # aistudio.google.com/docs/openai : current models cannot stop thinking; "minimal" is the least
     "gemini": {"minimal": _effort("minimal"), "low": _effort("low"), "medium": _effort("medium"), "high": _effort("high"),
                "xhigh": _effort("xhigh")},
+    # docs.x.ai/docs/guides/reasoning : Grok cannot stop thinking; "high" by default
+    "grok": {"low": _effort("low"), "medium": _effort("medium"), "high": _effort("high"), "xhigh": _effort("xhigh")},
     # docs.ollama.com/api/openai-compatibility : each model maps these names onto what it supports
     "ollama": {"off": _effort("none"), "low": _effort("low"), "medium": _effort("medium"), "high": _effort("high")},
 }
 # Ceiling on output tokens for OpenAI-compatible endpoints. Where the company's documentation says the thinking counts
 # against it, the ceiling has to be roomier or a long think leaves no room for the answer.
-MAX_OUTPUT = {"deepseek": 16000, "kimi": 16000}
+MAX_OUTPUT = {"chatgpt": 16000, "deepseek": 16000, "qwen": 16000, "kimi": 16000, "gemini": 16000}
 
 
 def thinking_levels(company):
@@ -69,6 +75,16 @@ def thinking_body(company, effort):
     return THINKING.get(company, {}).get(effort, {})
 
 
+def thinking_fallback(company, effort):
+    """What to send when a model turns "off" down: the least thinking its company offers ({} = nothing to fall back
+    to). The newest models of several companies cannot stop thinking, and whoever chose "off" wants as little of it
+    as there is, not the model's own default, which is usually a lot."""
+    if effort != "off":
+        return {}
+    choices = THINKING.get(company, {})
+    return next((choices[level] for level in ("minimal", "low") if level in choices), {})
+
+
 # The companies the tray menu offers: (id, name, endpoint). Everything but Claude speaks the OpenAI-compatible protocol;
 # "custom" is any other such endpoint, with the address typed in by the user.
 COMPANIES = (
@@ -78,7 +94,9 @@ COMPANIES = (
     ("qwen", "通义千问 (Qwen)", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
     ("kimi", "Kimi", "https://api.moonshot.cn/v1"),
     ("glm", "智谱 (GLM)", "https://open.bigmodel.cn/api/paas/v4"),
+    ("hunyuan", "腾讯混元 (Hunyuan)", "https://tokenhub.tencentmaas.com/v1"),
     ("gemini", "Gemini", "https://generativelanguage.googleapis.com/v1beta/openai"),
+    ("grok", "Grok", "https://api.x.ai/v1"),
     ("ollama", "Ollama", "http://localhost:11434/v1"),
     ("custom", "", ""),
 )
@@ -101,7 +119,7 @@ api_key =
 
 ; 模型名。provider = claude 时可选：
 ;   claude-sonnet-5-5（默认，均衡）  claude-haiku-5-5（最快最便宜）  claude-opus-5-5（更好）  claude-fable-5-2（最强）  claude-fable-5-1（上一代最强）
-; provider = openai 时填该平台的模型名，例如 gpt-4o、deepseek-chat、qwen-vl-max、moonshot-v1-8k、glm-4v
+; provider = openai 时填该平台的模型名，例如 gpt-6.2-sol、deepseek-flash、qwen4-max、kimi-k3.1-pro、glm-5.3-flash
 model = claude-sonnet-5-5
 
 ; provider = openai 时的接口地址（claude 不用填）。常见：
@@ -110,7 +128,9 @@ model = claude-sonnet-5-5
 ;   通义千问   https://dashscope.aliyuncs.com/compatible-mode/v1
 ;   Kimi       https://api.moonshot.cn/v1
 ;   智谱       https://open.bigmodel.cn/api/paas/v4
+;   腾讯混元   https://tokenhub.tencentmaas.com/v1
 ;   Gemini     https://generativelanguage.googleapis.com/v1beta/openai
+;   Grok       https://api.x.ai/v1
 ;   Ollama     http://localhost:11434/v1        （本地模型，api_key 随便填）
 base_url =
 
@@ -198,7 +218,7 @@ api_key =
 
 ; Model name. With provider = claude, one of:
 ;   claude-sonnet-5-5 (default, balanced)  claude-haiku-5-5 (fastest, cheapest)  claude-opus-5-5 (better)  claude-fable-5-2 (best)  claude-fable-5-1 (previous best)
-; With provider = openai, the platform's model name, e.g. gpt-4o, deepseek-chat, qwen-vl-max, moonshot-v1-8k, glm-4v
+; With provider = openai, the platform's model name, e.g. gpt-6.2-sol, deepseek-flash, qwen4-max, kimi-k3.1-pro, glm-5.3-flash
 model = claude-sonnet-5-5
 
 ; Endpoint for provider = openai (leave empty for claude). Common ones:
@@ -207,7 +227,9 @@ model = claude-sonnet-5-5
 ;   Qwen       https://dashscope.aliyuncs.com/compatible-mode/v1
 ;   Kimi       https://api.moonshot.cn/v1
 ;   GLM        https://open.bigmodel.cn/api/paas/v4
+;   Hunyuan    https://tokenhub.tencentmaas.com/v1
 ;   Gemini     https://generativelanguage.googleapis.com/v1beta/openai
+;   Grok       https://api.x.ai/v1
 ;   Ollama     http://localhost:11434/v1        (local model; any api_key will do)
 base_url =
 
@@ -278,6 +300,17 @@ OPTIONS_SECTION_EN = "[options]\n" + "".join(block for _, block in OPTION_BLOCKS
 DEFAULT_CONFIG_EN = DEFAULT_CONFIG_EN.replace("[options]\n%OPTION_BLOCKS%", OPTIONS_SECTION_EN)
 assert [k for k, _ in OPTION_BLOCKS] == [k for k, _ in OPTION_BLOCKS_EN]
 
+# the list of addresses above base_url as it was before Hunyuan and Grok were added (Chinese, English)
+_ZH_ADDRESSES = ["; provider = openai 时的接口地址（claude 不用填）。常见：", ";   ChatGPT    https://api.openai.com/v1",
+                 ";   DeepSeek   https://api.deepseek.com/v1", ";   通义千问   https://dashscope.aliyuncs.com/compatible-mode/v1",
+                 ";   Kimi       https://api.moonshot.cn/v1", ";   智谱       https://open.bigmodel.cn/api/paas/v4",
+                 ";   Gemini     https://generativelanguage.googleapis.com/v1beta/openai",
+                 ";   Ollama     http://localhost:11434/v1        （本地模型，api_key 随便填）"]
+_EN_ADDRESSES = ["; Endpoint for provider = openai (leave empty for claude). Common ones:", ";   ChatGPT    https://api.openai.com/v1",
+                 ";   DeepSeek   https://api.deepseek.com/v1", ";   Qwen       https://dashscope.aliyuncs.com/compatible-mode/v1",
+                 ";   Kimi       https://api.moonshot.cn/v1", ";   GLM        https://open.bigmodel.cn/api/paas/v4",
+                 ";   Gemini     https://generativelanguage.googleapis.com/v1beta/openai",
+                 ";   Ollama     http://localhost:11434/v1        (local model; any api_key will do)"]
 # Chinese comments written by older versions (different from the current template): recognized when switching to English
 _LEGACY_ZH_BLOCKS = {
     "__top__": [["; ================== 截图翻译 配置文件 ==================",  # the heading before the program was called Metaphrasis
@@ -285,7 +318,11 @@ _LEGACY_ZH_BLOCKS = {
                  "; （只有 [hotkey] 里的快捷键改了以后需要重启本工具）"]],
     "model": [["; 模型名。provider = claude 时可选：",
                ";   claude-sonnet-5-5（默认，均衡）  claude-haiku-5-5（最快最便宜）  claude-opus-5-5（更好）  claude-fable-5-1（最强最贵）",
+               "; provider = openai 时填该平台的模型名，例如 gpt-4o、deepseek-chat、qwen-vl-max、moonshot-v1-8k、glm-4v"],
+              ["; 模型名。provider = claude 时可选：",
+               ";   claude-sonnet-5-5（默认，均衡）  claude-haiku-5-5（最快最便宜）  claude-opus-5-5（更好）  claude-fable-5-2（最强）  claude-fable-5-1（上一代最强）",
                "; provider = openai 时填该平台的模型名，例如 gpt-4o、deepseek-chat、qwen-vl-max、moonshot-v1-8k、glm-4v"]],
+    "base_url": [_ZH_ADDRESSES[:2] + [_ZH_ADDRESSES[2] + "      （不支持传图，只能靠 OCR 文字翻译）"] + _ZH_ADDRESSES[3:], _ZH_ADDRESSES],
     "ui_language": [["; 界面语言：auto = 跟随 Windows 的显示语言（不支持的语言用英文）。也可以写 简体中文 / 繁體中文 / English / 日本語 / 한국어",
                      "; 托盘菜单里也能切换。配置文件里的这些注释始终是中文"]],
     "skip_chinese": [["; 框选的内容本来就是中文时，不调用 API（省钱）。如果判断错了，改成 false"]],
@@ -298,7 +335,11 @@ _LEGACY_ZH_BLOCKS = {
 _LEGACY_EN_BLOCKS = {
     "model": [["; Model name. With provider = claude, one of:",
                ";   claude-sonnet-5-5 (default, balanced)  claude-haiku-5-5 (fastest, cheapest)  claude-opus-5-5 (better)  claude-fable-5-1 (best, most expensive)",
+               "; With provider = openai, the platform's model name, e.g. gpt-4o, deepseek-chat, qwen-vl-max, moonshot-v1-8k, glm-4v"],
+              ["; Model name. With provider = claude, one of:",
+               ";   claude-sonnet-5-5 (default, balanced)  claude-haiku-5-5 (fastest, cheapest)  claude-opus-5-5 (better)  claude-fable-5-2 (best)  claude-fable-5-1 (previous best)",
                "; With provider = openai, the platform's model name, e.g. gpt-4o, deepseek-chat, qwen-vl-max, moonshot-v1-8k, glm-4v"]],
+    "base_url": [_EN_ADDRESSES[:2] + [_EN_ADDRESSES[2] + "      (no image input; translates from OCR text only)"] + _EN_ADDRESSES[3:], _EN_ADDRESSES],
     "save_history": [["; History: true = append every source and translation to 翻译记录.txt in this folder (keys are masked)",
                       "; (your previous version always recorded; kept on after the upgrade, set false if you don't want it)"]],
 }
@@ -368,10 +409,9 @@ def _comment_blocks(text):
 
 
 # wording of earlier versions, kept so that a comment-language switch still recognises it
-for _legacy, _template, _old in ((_LEGACY_ZH_BLOCKS, DEFAULT_CONFIG, {';   DeepSeek   https://api.deepseek.com/v1': ';   DeepSeek   https://api.deepseek.com/v1      （不支持传图，只能靠 OCR 文字翻译）', '; 思考强度：在托盘菜单里选最方便。Claude 可填 low（最快，推荐）/ medium / high / xhigh / max；其它公司各有各的档位，留空 = 用模型自己的默认': '; 思考深度（只对 Claude 有效）：low（最快，推荐）/ medium / high'}),
-                                 (_LEGACY_EN_BLOCKS, DEFAULT_CONFIG_EN, {';   DeepSeek   https://api.deepseek.com/v1': ';   DeepSeek   https://api.deepseek.com/v1      (no image input; translates from OCR text only)', "; Thinking effort: easiest to pick from the tray menu. Claude takes low (fastest, recommended) / medium / high / xhigh / max; other providers have their own choices, empty = the model's own default": '; Thinking depth (Claude only): low (fastest, recommended) / medium / high'})):
-    for _key in ("base_url", "effort"):
-        _legacy.setdefault(_key, []).append([_old.get(line, line) for line in _comment_blocks(_template)[_key]])
+for _legacy, _template, _old in ((_LEGACY_ZH_BLOCKS, DEFAULT_CONFIG, {'; 思考强度：在托盘菜单里选最方便。Claude 可填 low（最快，推荐）/ medium / high / xhigh / max；其它公司各有各的档位，留空 = 用模型自己的默认': '; 思考深度（只对 Claude 有效）：low（最快，推荐）/ medium / high'}),
+                                 (_LEGACY_EN_BLOCKS, DEFAULT_CONFIG_EN, {"; Thinking effort: easiest to pick from the tray menu. Claude takes low (fastest, recommended) / medium / high / xhigh / max; other providers have their own choices, empty = the model's own default": '; Thinking depth (Claude only): low (fastest, recommended) / medium / high'})):
+    _legacy.setdefault("effort", []).append([_old.get(line, line) for line in _comment_blocks(_template)["effort"]])
 
 
 def localize_config_comments(lang):
@@ -510,6 +550,19 @@ def read_text(path):
         return data.decode("gbk", errors="replace")
 
 
+def _encoding_to_add_in(data):
+    """The encoding in which more text can be put after these bytes so that read_text() still reads all of it."""
+    if data.startswith(b"\xff\xfe"):
+        return "utf-16-le"
+    if data.startswith(b"\xfe\xff"):
+        return "utf-16-be"
+    try:
+        data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return "gbk"
+    return "utf-8"
+
+
 def ensure_files():
     if not CONFIG_PATH.exists():  # first run: comments in the system language (Chinese / English), target language defaults to the system language
         sys_lang = i18n.system_language()
@@ -533,9 +586,11 @@ def load_config():
                     block = block.replace("save_history = false", "save_history = true").replace(*_UPGRADE_NOTE[lang])
                 addition += block
     if addition:
-        try:
-            with open(CONFIG_PATH, "a", encoding="utf-8") as f:
-                f.write(("" if text.endswith("\n") else "\n") + addition)
+        try:  # added at the end as the file itself is written: its encoding and its line endings
+            nl = "\r\n" if "\r\n" in text else "\n"
+            piece = (("" if text.endswith("\n") or not text else "\n") + addition).replace("\n", nl)
+            with open(CONFIG_PATH, "ab") as f:
+                f.write(piece.encode(_encoding_to_add_in(CONFIG_PATH.read_bytes()), errors="replace"))
             text = read_text(CONFIG_PATH)
         except OSError:
             pass
@@ -618,7 +673,20 @@ def company_name(cid):
 def model_problem(cfg):
     """A message if no model is chosen yet (an OpenAI-compatible provider has no default), else None."""
     if not cfg.model:
-        return t("还没有选择模型。\n\n请右键托盘图标，在“模型”里选一个；列表里没有的，可以在 config.ini 的 model 后面直接填写。")
+        return t("还没有选择模型。\n\n请右键托盘图标，在“模型”里选一个；列表里没有的，点最下面的“手动填写模型名…”。")
+    return None
+
+
+def model_name_problem(company, name):
+    """A message if a model name typed by hand cannot be right, else None. Whether the company really has a model of
+    that name only the company can say: that shows when it is first used."""
+    name = name.strip()
+    if not name:
+        return t("还没有填写模型名。")
+    if not name.isascii() or any(c.isspace() for c in name):
+        return t("模型名里有空格或中文字符，请照文档里的写法填。")
+    if company == "claude" and not name.startswith("claude-"):
+        return t("Claude 的模型名都以 claude- 开头，例如 claude-sonnet-5-5。")
     return None
 
 

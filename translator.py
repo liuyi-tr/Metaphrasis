@@ -182,9 +182,12 @@ def _user_text(size, lines, unreliable=False):
     return "\n".join(parts)
 
 
-def _consume(stream, on_text):
+def _consume(stream, on_text, alive=None):
+    """alive(): called as each piece of the answer arrives, thinking included; it may raise Cancelled to drop the request."""
     text = ""
     for event in stream:
+        if alive:
+            alive()
         if event.type == "content_block_start" and event.content_block.type == "text":
             text = ""  # a new text block (e.g. the fallback model taking over) starts from scratch
         elif event.type == "content_block_delta" and event.delta.type == "text_delta":
@@ -193,24 +196,25 @@ def _consume(stream, on_text):
     return stream.get_final_message()
 
 
-def _stream(client, params, on_text):
+def _stream(client, params, on_text, alive=None):
     # Haiku has no server-side fallback; other models retry on another model after a policy refusal
     if not params["model"].startswith("claude-haiku"):
         try:
             with client.beta.messages.stream(betas=[FALLBACK_BETA], fallbacks="default", **params) as stream:
-                return _consume(stream, on_text)
+                return _consume(stream, on_text, alive)
         except anthropic.BadRequestError as e:
             log.warning("Request with fallbacks was rejected; retrying without: %s", e.message)
     with client.messages.stream(**params) as stream:
-        return _consume(stream, on_text)
+        return _consume(stream, on_text, alive)
 
 
 # ---------- OpenAI-compatible APIs (ChatGPT, DeepSeek, Qwen, Kimi, GLM, Gemini, Ollama, ...) ----------
 _openai_clients = {}
 _vision_known = {}  # (base_url, model) -> can the model see images (auto-detected)
 _rf_known = {}  # base_url -> does the endpoint accept response_format
-_think_rejected = set()  # (base_url, model, effort): thinking settings a model turned down
+_think_instead = {}  # (base_url, model, effort) -> what went through after the model turned the chosen thinking setting down
 _tokens_key = {}  # (base_url, model) -> name of the output-limit parameter, when it is not max_tokens
+_limit_known = {}  # (base_url, model) -> the most output the model allows, when that is less than is asked for
 JSON_NOTE = ('\n\n输出格式：只输出一个 JSON 对象，不要任何多余文字，不要 Markdown 代码块。格式：\n'
              '{"blocks": [{"line_ids": [行编号, ...], "translation": "译文"}, ...]}')
 
@@ -277,8 +281,40 @@ def _plain_text(text):
     return _THINK_TAG.sub("", text).strip()
 
 
-def _call_openai(cfg, params, on_text, plain=False):
-    """plain: the answer is ordinary text (a converted message), not the JSON a screenshot translation comes back as."""
+# a refusal that is about how much output was asked for names the parameter, or speaks of the tokens it may produce
+_CEILING_WORDS = ("max_tokens", "max_completion_tokens", "max_output_tokens", "maxoutputtokens", "completion tokens",
+                  "output tokens", "token limit")
+_FIGURE = re.compile(r"(?<![\w.-])\d{3,7}(?![\w-]|\.\d)")  # a number standing on its own: not part of an id, a date or a version
+LEAST_OUTPUT = 1024  # a model that allows less than this cannot hold a translation: not worth asking again
+
+
+def _error_message(detail):
+    """What an error answer says, without the codes and request ids that travel with it."""
+    try:
+        data = json.loads(detail)
+    except ValueError:
+        return detail
+    if isinstance(data, list) and data:
+        data = data[0]
+    error = data.get("error", data) if isinstance(data, dict) else None
+    message = error.get("message") if isinstance(error, dict) else error
+    return message if isinstance(message, str) and message else detail
+
+
+def _allowed_output(said, limit):
+    """The output ceiling to ask for after a refusal of `limit`: the largest figure the refusal names below it (its
+    "at most 8192"), half as much when it names none. None: asking for less is not the answer (the refusal wants
+    more, or less would be too little to be of use)."""
+    if any(k in said for k in ("at least", "too small", "too low", "higher", "greater than", "minimum")):
+        return None
+    lower = max((n for n in map(int, _FIGURE.findall(said)) if LEAST_OUTPUT <= n < limit), default=limit // 2)
+    return lower if lower >= LEAST_OUTPUT else None
+
+
+def _call_openai(cfg, params, on_text, plain=False, alive=None):
+    """plain: the answer is ordinary text (a converted message), not the JSON a screenshot translation comes back as.
+    alive(): called before each request and as each piece of the answer arrives, thinking included; it may raise
+    Cancelled to drop the request."""
     clean = _plain_text if plain else _strip_fences
     client = _openai_client(cfg)
     url = cfg.base_url.rstrip("/") + "/chat/completions"
@@ -291,12 +327,30 @@ def _call_openai(cfg, params, on_text, plain=False):
     use_rf = not plain and _rf_known.get(cfg.base_url, True)
     # the thinking setting chosen in the tray menu, in this company's own parameters ({} = say nothing)
     company, effort = getattr(cfg, "company", ""), getattr(cfg, "effort", "")
-    think = {} if (cfg.base_url, params["model"], effort) in _think_rejected else settings.thinking_body(company, effort)
-    limit = min(int(params.get("max_tokens", 4096)), settings.MAX_OUTPUT.get(company, 8192))
-    dropped = False  # the thinking setting was taken out after a rejection
-    for _ in range(6):
+    remembered = (cfg.base_url, params["model"], effort)
+    chosen = settings.thinking_body(company, effort)
+    think = _think_instead.get(remembered, chosen)
+    model = (cfg.base_url, params["model"])
+    asked = min(int(params.get("max_tokens", 4096)), settings.MAX_OUTPUT.get(company, 8192))
+    limit = min(asked, _limit_known.get(model, asked))
+    replaced = False  # the thinking setting was changed or taken out after a rejection
+    lowered = False  # less output is being asked for than at first, after a rejection
+    lowering = True  # ... which is tried as long as it has not been tried in vain
+
+    def another_thinking(why):
+        # not every model of a company takes every thinking setting. A refused "off" becomes the least thinking the
+        # company offers (its newest models may be unable to stop); any other setting, and a refused next best, is
+        # left out and the request sent once more
+        nonlocal think, replaced
+        think, replaced = (settings.thinking_fallback(company, effort) if think == chosen else {}), True
+        log.info("The request was rejected with a thinking setting; sending %s. The answer was: %s",
+                 "the least thinking instead" if think else "without it", why.strip()[:200])
+
+    for _ in range(10):
+        if alive:
+            alive()
         body = {"model": params["model"], "stream": True, "messages": _to_openai_messages(params, with_image, plain),
-                _tokens_key.get((cfg.base_url, params["model"]), "max_tokens"): limit}
+                _tokens_key.get(model, "max_tokens"): limit}
         if use_rf:
             body["response_format"] = {"type": "json_object"}
         body.update(think)
@@ -304,30 +358,47 @@ def _call_openai(cfg, params, on_text, plain=False):
             with client.stream("POST", url, json=body, headers=headers) as r:
                 if r.status_code >= 400:
                     detail = r.read().decode("utf-8", "replace")
-                    low = detail.lower()
-                    if r.status_code in (400, 422) and use_rf and any(k in low for k in ("response_format", "json mode", "json_object")):
+                    refused = r.status_code in (400, 422)
+                    # what the refusal is about. The model's own name says nothing on that (a model can be called
+                    # ...-vision or ...-thinking), so it is taken out before looking for the words
+                    said = _error_message(detail).lower().replace(params["model"].lower() or "\0", " ")
+                    low = detail.lower().replace(params["model"].lower() or "\0", " ")
+                    if refused and use_rf and any(k in low for k in ("response_format", "json mode", "json_object")):
                         _rf_known[cfg.base_url] = False  # some models also refuse JSON mode while they think; the prompt still asks for JSON
                         use_rf = False
                         continue
-                    if r.status_code in (400, 422) and "max_tokens" in body and "max_completion_tokens" in low:
-                        _tokens_key[(cfg.base_url, params["model"])] = "max_completion_tokens"  # newer reasoning models renamed it
+                    if refused and "max_tokens" in body and "max_completion_tokens" in low:
+                        _tokens_key[model] = "max_completion_tokens"  # newer reasoning models renamed it
                         continue
-                    if r.status_code in (400, 422) and with_image and cfg.vision == "auto" and any(
+                    if refused and think and any(k in low for k in ("think", "reasoning")):
+                        another_thinking(said)
+                        continue
+                    if refused and lowering and any(k in low for k in _CEILING_WORDS):
+                        # the model allows less output than the company's newest ones: ask for what it allows
+                        lower = _allowed_output(said, limit)
+                        if lower:
+                            log.info("The model allows less output than the %d tokens asked for; asking for %d", limit, lower)
+                            limit, lowered = lower, True
+                            continue
+                        limit, lowered, lowering = asked, False, False  # it was not that: back to what was asked for
+                    if refused and with_image and cfg.vision == "auto" and any(
                             k in low for k in ("image", "vision", "multimodal", "content type")):
                         _vision_known[(cfg.base_url, cfg.model)] = False
                         with_image = False
                         log.info("This model does not accept images; sending OCR text only")
                         continue
-                    if r.status_code in (400, 422) and think:
-                        # not every model of a company takes every thinking setting: send the request once more without it
-                        think, dropped = {}, True
-                        log.info("The request was rejected with a thinking setting; sending without it")
+                    if refused and think:  # no telling what it is about: the thinking setting is the likeliest
+                        another_thinking(said)
                         continue
                     raise _http_error(r.status_code, detail, cfg)
-                if dropped:  # it went through without the setting, so the setting was the problem: do not try it on this model again
-                    _think_rejected.add((cfg.base_url, params["model"], effort))
+                if replaced:  # this is what the model takes: start there the next time, without the refused request
+                    _think_instead[remembered] = think
+                if lowered:
+                    _limit_known[model] = limit
                 text, finish = "", None
                 for line in r.iter_lines():
+                    if alive:
+                        alive()
                     if not line.startswith("data:"):
                         continue
                     data = line[5:].strip()
@@ -381,11 +452,13 @@ def list_models(cfg, limit=40):
     return sorted(set(names))[:limit]
 
 
-def _call(cfg, params, on_text, plain=False):
+def _call(cfg, params, on_text, plain=False, alive=None):
     if getattr(cfg, "provider", "claude") == "openai":
-        return _call_openai(cfg, params, on_text, plain)
+        return _call_openai(cfg, params, on_text, plain, alive)
     try:
-        return _stream(_client(cfg), params, on_text)
+        if alive:
+            alive()
+        return _stream(_client(cfg), params, on_text, alive)
     except anthropic.AuthenticationError as e:
         raise TranslateError(t("API Key 无效或已被停用，请检查 config.ini 里的 api_key。"), True) from e
     except anthropic.PermissionDeniedError as e:
@@ -650,9 +723,9 @@ def convert_text(cfg, text, language, cancelled=None):
     """A message the user wrote, said in another language the way a native speaker would say it.
 
     Text only: no screenshot and no OCR. Returns (converted text, token usage).
-    cancelled(): when it returns True the request is dropped as the next piece of the answer arrives, and Cancelled
-    is raised."""
-    def arrived(_):
+    cancelled(): when it returns True the request is dropped as the next piece of the answer arrives (a piece of the
+    model's thinking counts), and Cancelled is raised; no second request is made either."""
+    def alive():
         if cancelled and cancelled():
             raise Cancelled()
 
@@ -661,19 +734,21 @@ def convert_text(cfg, text, language, cancelled=None):
               "messages": [{"role": "user", "content": [{"type": "text", "text": "<<<\n" + text + "\n>>>"}]}]}
     if claude:
         params["output_config"] = {"effort": cfg.effort}
-    resp = _call(cfg, params, arrived, plain=True)
+    resp = _call(cfg, params, lambda _: None, plain=True, alive=alive)
     if resp.stop_reason == "refusal" and claude and cfg.model != RETRY_MODEL:
         log.warning("Safety filter refused a text conversion (%s); retrying on %s", cfg.model, RETRY_MODEL)
-        resp = _call(cfg, dict(params, model=RETRY_MODEL), arrived, plain=True)
+        resp = _call(cfg, dict(params, model=RETRY_MODEL), lambda _: None, plain=True, alive=alive)
     if resp.stop_reason == "refusal":
         raise TranslateError(t("安全过滤拒绝了这段文字（多半是误判），没有转换。"))
     if resp.stop_reason == "max_tokens":
         raise TranslateError(t("这段文字太长，一次转换不完，请分成几段。"))
     texts = [b.text for b in resp.content if b.type == "text"]
     out = _plain_text(texts[-1]) if texts else ""
-    if out.startswith("<<<"):  # a model that copies the markers
+    # a model that copies the markers round the message: they come off, but a message that itself begins with <<<
+    # or ends with >>> ("click here >>>") keeps its own
+    while out.startswith("<<<") and out.count("<<<") > text.count("<<<"):
         out = out[3:].lstrip()
-    if out.endswith(">>>"):
+    while out.endswith(">>>") and out.count(">>>") > text.count(">>>"):
         out = out[:-3].rstrip()
     if not out:
         log.error("Empty answer to a text conversion")

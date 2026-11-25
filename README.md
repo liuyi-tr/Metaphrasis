@@ -51,9 +51,9 @@ Two ways, pick one.
 
 Either way, the next step is the key. Right-click the tray icon, open **API provider**, click your provider and paste the key into the box that comes up. It is written to `config.ini` in the program folder and takes effect right away, no restart. Editing `config.ini` in Notepad works too: paste the key after `api_key =`.
 
-The default provider is Claude. ChatGPT, DeepSeek, Qwen, Kimi, GLM, Gemini and a local Ollama are in the same menu, and **Custom endpoint** takes any other address that speaks the OpenAI format. More on this under [Provider, model and thinking effort](#provider-model-and-thinking-effort).
+The default provider is Claude. ChatGPT, DeepSeek, Qwen, Kimi, GLM, Tencent Hunyuan, Gemini, Grok and a local Ollama are in the same menu, and **Custom endpoint** takes any other address that speaks the OpenAI format. More on this under [Provider, model and thinking effort](#provider-model-and-thinking-effort).
 
-`target_language` defaults to Chinese. Write any language there, English, 日本語, 한국어, or pick one from the tray menu; the source can be anything, including Chinese. English runs about twice as long as Chinese, so Chinese-to-English overlays come out in smaller type; popup mode doesn't have that problem.
+`target_language` starts out as your Windows display language when that is Chinese, Japanese or Korean, and as English otherwise. Write any language there, English, 日本語, 한국어, or pick one from the tray menu; the source can be anything, including Chinese. English runs about twice as long as Chinese, so Chinese-to-English overlays come out in smaller type; popup mode doesn't have that problem.
 
 Models that can't take images still work: the tool notices and sends text only. But then Japanese and Korean won't translate, because that text comes from the Windows OCR engines for English and Chinese.
 
@@ -96,12 +96,14 @@ It works anywhere you can type: a chat window, a search box, an input box on a w
 - With nothing selected the whole input box is converted; with a selection, only that part.
 - Text that is already in the target language is not handed back as typed: spelling, grammar, word order, capital letters and punctuation are put right. File names, paths, commands and code are left alone, letter for letter.
 - Pick the language under **Convert typed text to** in the tray menu, or write `convert_language` in `config.ini`; any language works. To change the hotkey, add a line `convert = <keys>` under `[hotkey]`.
-- Changed your mind while it is working? Press Esc: the conversion is cancelled and the text in the box stays as it was. Once the text has started going in, it is too late.
+- Changed your mind while it is working? Press Esc: the conversion is cancelled at once and the text in the box stays as it was. If the program had selected the text itself, the selection is taken away again, so that typing on does not wipe your message. Once the text has started going in, it is too late.
 - What goes in is real text: Ctrl + Z in that program takes it back.
-- If you click somewhere else while it is working, that is fine: the program goes back to the input box, replaces the text, and returns you to where you were. If it cannot get back, or the box no longer holds what it held, it leaves the box alone, puts the result on the clipboard and tells you to paste it.
+- If you click somewhere else while it is working, that is fine: once your hands have been off the keyboard for a moment, the program goes back to the input box, replaces the text, and returns you to where you were. If it cannot get back (you are busy typing somewhere else, say), or the box no longer holds what it held, it leaves the box alone, puts the result on the clipboard and tells you to paste it.
 - Up to 5,000 characters at a time.
 
-Keys are only ever sent to a place Windows confirms is an input box. The text of a web page, pictures and read-only text are never touched, and what is in a password field is never read. The text travels through the clipboard (Ctrl + C / Ctrl + V), because that is the one way every program supports; whatever was on your clipboard before (text, a picture, copied files) is put back afterwards.
+Keys are only ever sent to a place Windows confirms is a text box. The text of a web page, pictures, read-only text, checkboxes, drop-down lists and sliders are never touched, and what is in a password field is never read. Terminal windows are left alone too (the Windows console, Windows Terminal, the terminal inside VS Code): Ctrl + C and Ctrl + V mean something else there.
+
+The text travels through the clipboard (Ctrl + C / Ctrl + V), because that is the one way every program supports. Whatever was on your clipboard before (text, a picture, copied files) is put back afterwards, and something you copy yourself while a conversion is running is left as it is. If the clipboard holds something that could not be put back (something very large, or of a kind only its own program understands), nothing is converted and you are told why. One thing is outside the program's reach: with Windows clipboard history (Win + V) switched on, the text you converted shows up in that list, because it is the other program that copies it.
 
 Some programs do not tell Windows where their input boxes are. There it says "This is not a place you can type in" and does nothing. I have tested it in browsers (Edge and other Chromium-based windows) and in plain Windows text boxes; other programs may or may not work, and if one does not, please open an issue.
 
@@ -127,7 +129,9 @@ All three are in the tray menu, and they are set up in that order: provider firs
 
 The key is shown as dots unless you tick Show, so a screenshot of the box does not give it away. Each provider keeps its own key, model and effort in `config.ini`. Switching puts the outgoing provider's settings aside and brings the incoming one's back, so a key is never sent to a company it does not belong to.
 
-**Model.** Claude has a fixed list of five. For the other providers the list is asked of the provider itself once its key is saved (a free request), so it shows what your account can actually use. If the model you want is not listed, type its name after `model =` in `config.ini`.
+**Model.** Claude has a fixed list of five. For the other providers the list is asked of the provider itself once its key is saved (a free request), so it shows what your account can actually use. If the model you want is not listed, or the list could not be fetched, click **Type a model name…** at the bottom of the Model menu and type the name into the small box that opens; no restart needed. A wrong name does no harm: the first time it is used the provider says there is no such model, and the program tells you.
+
+<p align="center"><img src="docs/model_dialog.png" width="380"></p>
 
 **Thinking effort.** How long the model reasons before it answers: more is slower and costs more, and for a few lines of interface text the lowest setting is enough. Every provider has its own choices, because every API does this differently:
 
@@ -139,10 +143,18 @@ The key is shown as dots unless you tick Show, so a screenshot of the box does n
 | Qwen | Default, Thinking off, Thinking on, Low, High, Very high |
 | Kimi | Default, Low, High, Maximum |
 | GLM | Default, Thinking off, Low, High, Maximum |
+| Tencent Hunyuan | Default, Thinking off, Low, Medium, High |
 | Gemini | Default, Minimal, Low, Medium, High, Very high |
+| Grok | Default, Low, Medium, High, Very high |
 | Ollama | Default, Thinking off, Low, Medium, High |
 
-Default sends nothing and leaves it to the model. Some providers have no off switch because their current models always think. Within one provider, older and newer models do not accept the same choices; if a model turns a setting down, the request is sent again without it, so the translation still arrives, at that model's default.
+Default sends nothing and leaves it to the model. Some providers have no off switch because their current models always think. Within one provider, older and newer models do not accept the same choices:
+
+- If you chose **Thinking off** and the model cannot stop thinking (the newest flagship models of several providers cannot), the request is sent again with that provider's lowest level. What you asked for is less thinking, not the model's own default, which is usually a lot.
+- If a model turns any other level down, the request is sent again without the setting, so the translation still arrives, at that model's default.
+- The same goes for the length of the answer: a model that allows less output than the program asks for (older models often do) is asked again for what it allows.
+
+In each case the extra request (two at the very most) is only made the first time: the program remembers what that model accepts for as long as it is running, and starts there the next time.
 
 I only have a Claude key, so Claude is the only provider tested against the real service. The others follow each company's API documentation as of November 2026 and were checked against a local stand-in. If one of them misbehaves for you, please open an issue.
 

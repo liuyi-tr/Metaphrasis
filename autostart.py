@@ -27,14 +27,16 @@ def is_enabled():
 
 
 def adopt_old_link():
-    """A shortcut made under the earlier name is given the new one (renamed, so the program is not started twice).
+    """A shortcut made under the program's earlier name is replaced by one under the new name, so the program is not
+    started twice. The new one is made afresh and starts this copy: the old one may point at a folder the program has
+    since moved out of (a newer version unpacked somewhere else). The old one only goes once the new one is there.
     True when there was one to take over."""
     if not OLD_LINK_PATH.exists():
         return False
+    if not LINK_PATH.exists():
+        enable()
     if LINK_PATH.exists():
         OLD_LINK_PATH.unlink()
-    else:
-        OLD_LINK_PATH.rename(LINK_PATH)
     return True
 
 

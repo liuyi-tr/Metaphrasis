@@ -1,5 +1,5 @@
 name: Something is wrong / 报告问题
-description: The translation is wrong, misplaced, missing, or the program misbehaves. 译文不对、位置不对、没出来，或者程序本身出了问题。
+description: The translation is wrong, misplaced, missing, Alt+1 does not work in some program, or the program misbehaves. 译文不对、位置不对、没出来，输入框转换在某个软件里不行，或者程序本身出了问题。
 body:
   - type: markdown
     attributes:
@@ -21,7 +21,7 @@ body:
     attributes:
       label: Version / 版本
       description: Right-click the tray icon; the grey line near the bottom. 右键托盘图标，靠下那行灰色的字。
-      placeholder: "1.0.3"
+      placeholder: "1.1.0"
     validations:
       required: true
   - type: dropdown
@@ -35,7 +35,9 @@ body:
         - Qwen / 通义千问
         - Kimi
         - GLM / 智谱
+        - Tencent Hunyuan / 腾讯混元
         - Gemini
+        - Grok
         - Ollama
         - Custom endpoint / 自定义接口
     validations:

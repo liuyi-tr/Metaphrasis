@@ -80,6 +80,16 @@ def refresh_icon_file(path):
     return True
 
 
+def adopt_old_startup_link():
+    """A "start with Windows" shortcut made under the program's earlier name is taken over. Run in the background at
+    startup: making a shortcut takes a second or two, and a failure here must never keep the program from starting."""
+    try:
+        if autostart.adopt_old_link():
+            log.info("The startup shortcut made under the earlier name was replaced by one that starts this copy")
+    except Exception:
+        log.exception("Taking over the old startup shortcut failed")
+
+
 def text_rows(text, width):
     """Rough number of rows the text takes in a box `width` characters wide (CJK counts as 2)."""
     rows = 0
@@ -144,6 +154,27 @@ class ConvertRun:
     def __init__(self):
         self._lock = threading.Lock()
         self.state = "working"
+        self._made = None  # (session, place, text): a selection the program made itself in the box (Ctrl+A)
+
+    def selected(self, session, place, text):
+        """The program has selected everything in the box itself."""
+        with self._lock:
+            self._made = (session, place, text)
+
+    def unselect(self):
+        """Nothing is going to replace that selection after all (Esc, an error): it is taken away again, so that the
+        next key the user types does not wipe the whole message. Done once, whoever asks first."""
+        with self._lock:
+            made, self._made = self._made, None
+        if made:
+            import inputbox
+            if inputbox.unselect(*made):
+                log.info("Convert: the selection the program had made was taken away again")
+
+    def forget(self):
+        """The selection is about to be replaced by the result: it is no longer one to take away."""
+        with self._lock:
+            self._made = None
 
     def _move(self, to):
         with self._lock:
@@ -797,6 +828,92 @@ class KeyDialog:
             self.win.destroy()
 
 
+class ModelDialog:
+    """Small card for typing a model's name by hand: for a model the company's own list does not show, or when that
+    list could not be fetched. Opens with the name in use; saving writes it to config.ini."""
+
+    def __init__(self, app, company, current, on_save):
+        self.app, self.company, self.on_save = app, company, on_save
+        self.alive = True
+        self._drag = None
+        name = settings.company_name(company)
+        win = self.win = tk.Toplevel(app.root)
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
+        win.configure(bg=POPUP_BORDER)
+        card = tk.Frame(win, bg="white")
+        card.pack(fill="both", expand=True, padx=1, pady=1)
+
+        header = tk.Frame(card, bg="white")
+        header.pack(fill="x", padx=(20, 10), pady=(10, 0))
+        self.title = tk.Label(header, text=t("手动填写模型名 · {name}", name=name), bg="white", fg="#111827", font=(UI_FONT, 10, "bold"))
+        self.title.pack(side="left", pady=2)
+        close = tk.Label(header, text="✕", bg="white", fg="#9CA3AF", font=(UI_FONT, 11), cursor="hand2", padx=8)
+        close.pack(side="right")
+        close.bind("<Enter>", lambda e: close.configure(fg="#111827"))
+        close.bind("<Leave>", lambda e: close.configure(fg="#9CA3AF"))
+        close.bind("<Button-1>", lambda e: self.close())
+        for w in (header, self.title):
+            w.bind("<ButtonPress-1>", self._drag_start)
+            w.bind("<B1-Motion>", self._drag_move)
+
+        body = tk.Frame(card, bg="white")
+        body.pack(fill="both", expand=True, padx=20, pady=(8, 2))
+        message = tk.Label(body, text=t("模型名的写法要和这家公司文档里的完全一样，\n大小写和横线都不能错。"),
+                           bg="white", fg="#374151", font=(UI_FONT, 10), justify="left", anchor="w")
+        message.pack(fill="x", pady=(0, 8))
+        self.model = tk.StringVar(value=current or "")
+        box = tk.Frame(body, bg="white", highlightthickness=1, highlightbackground="#D1D5DB")
+        self.entry = tk.Entry(box, textvariable=self.model, width=46, font=("Consolas", 10), relief="flat", bd=0, bg="white",
+                              fg="#111827", insertbackground="#111827", highlightthickness=0)
+        self.entry.pack(fill="x", padx=8, pady=6)
+        self.entry.bind("<FocusIn>", lambda e: box.configure(highlightbackground=ACCENT))
+        self.entry.bind("<FocusOut>", lambda e: box.configure(highlightbackground="#D1D5DB"))
+        box.pack(fill="x", pady=(2, 6))
+        self.error = tk.Label(body, text="", bg="white", fg=ERROR_FG, font=(UI_FONT, 9), justify="left", anchor="w")
+        self.error.pack(fill="x", pady=(4, 0))
+
+        bottom = tk.Frame(card, bg="white")
+        bottom.pack(fill="x", padx=(20, 14), pady=(4, 12))
+        flat_button(bottom, t("保存"), self.save, primary=True).pack(side="right", padx=(6, 0), pady=2)
+        flat_button(bottom, t("取消"), self.close).pack(side="right", padx=6, pady=2)
+        bottom.bind("<ButtonPress-1>", self._drag_start)
+        bottom.bind("<B1-Motion>", self._drag_move)
+        win.bind("<Return>", lambda e: self.save())
+        win.bind("<Escape>", lambda e: self.close())
+        win.protocol("WM_DELETE_WINDOW", self.close)
+        win.update_idletasks()
+        for label in (message, self.error):
+            label.configure(wraplength=box.winfo_reqwidth())
+        app.place_beside(win, None)
+        _round_corners(win)
+        app.focus(win)
+        self.entry.focus_set()
+        self.entry.select_range(0, "end")  # typing replaces the name in use
+        self.entry.icursor("end")
+
+    def _drag_start(self, e):
+        self._drag = (e.x_root - self.win.winfo_x(), e.y_root - self.win.winfo_y())
+
+    def _drag_move(self, e):
+        if self._drag:
+            self.win.geometry(f"+{e.x_root - self._drag[0]}+{e.y_root - self._drag[1]}")
+
+    def save(self):
+        name = self.model.get().strip()
+        problem = settings.model_name_problem(self.company, name)
+        if problem:
+            self.error.configure(text=problem)
+            return
+        self.close()
+        self.on_save(name)
+
+    def close(self):
+        if self.alive:
+            self.alive = False
+            self.win.destroy()
+
+
 class App:
     def __init__(self):
         self.cfg = settings.load_config()
@@ -822,6 +939,7 @@ class App:
         self.tray = None
         self.models = {}  # company -> model names fetched from its API, or "loading" / "failed"
         self.key_dialog = None
+        self.model_dialog = None
         self.converting = False  # a text conversion (input box) is under way
         self._convert_run = None  # its ConvertRun: Esc cancels it
         self._convert_toast = None
@@ -899,7 +1017,8 @@ class App:
 
         cfg = self.cfg
         if cfg.provider == "claude":
-            return choices(list(settings.SUPPORTED_MODELS) + ([] if cfg.model in settings.SUPPORTED_MODELS else [cfg.model]))
+            return choices(list(settings.SUPPORTED_MODELS) + ([] if cfg.model in settings.SUPPORTED_MODELS else [cfg.model])) + [
+                pystray.Menu.SEPARATOR, item(t("手动填写模型名…"), self._act("type_model"))]
         state = self.models.get(cfg.company)
         if state is None and self._has_key():
             self._fetch_models()
@@ -914,7 +1033,7 @@ class App:
             items.append(item(t("获取模型列表失败，点这里重试"), self._act("refresh_models")))
         else:
             items += [pystray.Menu.SEPARATOR, item(t("刷新模型列表"), self._act("refresh_models"))]
-        return items + [item(t("手动填写模型名（打开配置文件）"), self._act("open_config"))]
+        return items + [item(t("手动填写模型名…"), self._act("type_model"))]
 
     def _effort_items(self):
         import pystray
@@ -1038,6 +1157,8 @@ class App:
             self.set_api_value("effort", name[7:], t("思考强度：{name}", name=t(EFFORT_LABELS[name[7:]])))
         elif name == "change_key":
             self.ask_key(self.cfg.company)
+        elif name == "type_model":
+            self.ask_model()
         elif name == "refresh_models":
             self._fetch_models(force=True)
             if self.tray:
@@ -1076,6 +1197,8 @@ class App:
             self.cfg = settings.load_config()
         except settings.ConfigError as e:
             self.show_error(str(e), open_config=True)
+        if self.model_dialog and self.model_dialog.alive and self.model_dialog.company != self.cfg.company:
+            self.model_dialog.close()  # the box was for typing a model of the company that was in use before
         if self.tray:
             self.tray.update_menu()
 
@@ -1109,6 +1232,19 @@ class App:
                                     url=self.cfg.base_url if current and company == "custom" else "")
         if self.tray:
             self.tray.update_menu()  # the radio mark goes back to the company in use until the key is saved
+
+    def ask_model(self):
+        """The small box for typing a model's name: for one the list does not show, or when the list could not be fetched."""
+        if self.model_dialog and self.model_dialog.alive:
+            self.model_dialog.close()
+        company = self.cfg.company
+        self.model_dialog = ModelDialog(self, company, self.cfg.model, on_save=lambda name: self._save_typed_model(company, name))
+
+    def _save_typed_model(self, company, name):
+        """A name typed in the box goes to the company the box was opened for, and to no other: it was checked by
+        that company's rules, and config.ini holds one model per company."""
+        if company == self.cfg.company:
+            self.set_api_value("model", name, t("模型：{name}", name=model_label(name)))
 
     def _use_company(self, company, api_key=None, base_url=None):
         same = company == self.cfg.company  # then only its key (or address) changes
@@ -1514,11 +1650,18 @@ class App:
 
     def cancel_convert(self):
         """Esc while a conversion is under way: nothing is put into the input box. Once the text has started going in
-        it is too late, and Esc does nothing."""
+        it is too late, and Esc does nothing.
+
+        The conversion is over for the user at that moment: Esc goes back to the other programs and the hotkey works
+        again, even if the request to the API is still on its way (its answer is dropped when it comes)."""
         run = self._convert_run
         if self.converting and run is not None and run.cancel():
-            self._convert_note(None)
-            self.toast(t("已取消，没有转换"))
+            self._convert_over(run)
+
+            def wind_up():  # the selection first, the word to the user after it: a note coming up could get in its way
+                run.unselect()
+                self.events.put(("call", lambda: self.toast(t("已取消，没有转换"))))
+            threading.Thread(target=wind_up, name="unselect", daemon=True).start()
 
     def _convert(self, cfg, owner, key, run):
         """Background thread: is this an input box -> take its text -> the API rewords it -> put it in the text's place.
@@ -1530,6 +1673,10 @@ class App:
         def ui(function, *args, **kw):
             self.events.put(("call", lambda: function(*args, **kw)))
 
+        def say(text):  # after Esc the user has been told "cancelled": nothing more is said about this conversion
+            if not run.cancelled:
+                ui(self.toast, text)
+
         name = cfg.convert_language
         session = None
         try:
@@ -1540,35 +1687,57 @@ class App:
             session = inputbox.Session()
             kind, selection, whole = session.look(keep=True)  # the box is kept: the result goes back into this one
             if kind == inputbox.PASSWORD:
-                return ui(self.toast, t("密码框里的内容不会读取，没有转换"))
+                return say(t("密码框里的内容不会读取，没有转换"))
             if kind != inputbox.EDITABLE:
                 log.info("Convert: not an input box (%s)", kind)
-                return ui(self.toast, t("这里不是能输入文字的地方，没有转换"))
+                return say(t("这里不是能输入文字的地方，没有转换"))
             # with nothing selected the whole box is taken, but only a box known to hold a message: no key goes into
             # a box that says it is empty, and a long document is never selected wholesale
             # (an empty box in a browser reports one placeholder character, U+FFFC: that is an empty box too)
-            whole_fits = bool(whole and whole.replace("￼", "").strip()) and len(whole) <= inputbox.MAX_CHARS
-            take_all = selection is not None and not selection.strip()  # the program says nothing is selected
-            if take_all and not whole_fits:
-                return ui(self.toast, self._nothing_to_convert(whole))
+            empty = whole is not None and inputbox.blank(whole)
+            whole_fits = whole is not None and not empty and len(whole) <= inputbox.MAX_CHARS
+            take_all = selection is not None and inputbox.blank(selection)  # the program says nothing is selected
+            if (take_all and not whole_fits) or (selection is None and empty):
+                return say(self._nothing_to_convert(whole))
             place = inputbox.focus_place()
+
+            def at_box():  # asked before each key: is the keyboard still in the box, and has Esc not been pressed?
+                return not run.cancelled and inputbox.focus_place() == place and session.box_focused()
+
             previous = inputbox.snapshot(owner)
-            text = None if take_all else inputbox.copy_selection(owner)
-            if text is None and (take_all or (selection is None and whole_fits)):
-                # (second case: a box that cannot say what is selected, and Ctrl+C found nothing selected)
-                take_all = True
-                selection = inputbox.select_all(session)
-                if selection is None or selection.strip():  # go on once the box shows its text as selected (None: it cannot say)
-                    text = inputbox.copy_selection(owner)
-            if text is not None:
-                inputbox.restore(previous, owner)  # the clipboard is the user's again while the API works
-            if not text or not text.strip():
-                return ui(self.toast, t("没能取到选中的文字，没有转换") if selection or take_all else self._nothing_to_convert(whole))
-            if len(text) > inputbox.MAX_CHARS:
-                return ui(self.toast, t("选中的文字太长（超过 {n} 字），请分成几段转换", n=inputbox.MAX_CHARS))
+            if previous is None:
+                log.info("Convert: the clipboard holds something that could not be put back afterwards; nothing done")
+                return say(t("剪贴板里现在的内容没法原样放回去，为了不弄丢它，这次没有转换"))
+            before = inputbox.sequence()
+            text = None
+
+            def copy():  # a box that has shown what is selected will hand it over: it is given longer (the program that
+                # had the clipboard before may be slow to let go of it), so that the copy does not arrive after we gave up
+                return inputbox.copy_selection(owner, timeout=3.0 if selection else 1.0)
+
+            try:
+                if not take_all and at_box():
+                    text = copy()
+                if text is None and (take_all or (selection is None and whole_fits)) and at_box():
+                    # (second case: a box that cannot say what is selected, and Ctrl+C found nothing selected)
+                    take_all = True
+                    selection = inputbox.select_all(session)
+                    if selection:
+                        run.selected(session, place, selection)  # ours to take away again if nothing replaces it
+                    if (selection is None or not inputbox.blank(selection)) and at_box():  # go on once the box shows its text as selected (None: it cannot say)
+                        text = copy()
+            finally:
+                if inputbox.sequence() != before:  # whatever the copy put there, text or not:
+                    inputbox.restore(previous, owner)  # the clipboard is the user's again while the API works
             if run.cancelled:
                 log.info("Convert: cancelled with Esc before anything was sent")
                 return
+            if text is None or inputbox.blank(text):
+                run.unselect()
+                return say(t("没能取到选中的文字，没有转换") if selection or take_all else self._nothing_to_convert(whole))
+            if len(text) > inputbox.MAX_CHARS:
+                run.unselect()
+                return say(t("选中的文字太长（超过 {n} 字），请分成几段转换", n=inputbox.MAX_CHARS))
             ui(self._convert_working, run, t("正在转换成 {name}…（Esc 取消）", name=name))
             started = time.perf_counter()
             out, usage = translator.convert_text(cfg, text.strip().replace("\r\n", "\n"), settings.english_name(name),
@@ -1576,6 +1745,7 @@ class App:
             if not run.commit():  # Esc came while the answer was on its way: nothing goes into the box
                 log.info("Convert: cancelled with Esc; the answer was dropped")
                 return
+            run.forget()  # from here on the selection is what the result replaces: it stays, also for a Ctrl+V by hand
             if cfg.save_history:
                 try:
                     settings.append_history(cfg.model, text, out)
@@ -1589,55 +1759,72 @@ class App:
                 out = out.replace("\n", "\r\n")
             out = text[:len(text) - len(text.lstrip())] + out + text[len(text.rstrip()):]
             # the user may have clicked elsewhere meanwhile: the result still goes into the box as long as the box holds what it held
-            how = inputbox.put_in_place(session, place, selection, out, owner, whole=whole if take_all else None)
-            if how:
-                if how == "back":
-                    log.info("Convert: the user had gone elsewhere; went back to the box, replaced, returned")
-                ui(self._convert_note, None)
-                time.sleep(1.0)  # the program reads the clipboard when it gets round to the paste: only then put the old content back
-                inputbox.restore(previous, owner)
-            else:
-                log.info("Convert: the box changed or could not be reached; copied instead of replacing")
-                inputbox.set_clipboard_text(out, owner)
-                ui(self.toast, t("没能放回原来的位置，转换结果已复制，按 Ctrl+V 粘贴"))
+            how = inputbox.put_in_place(session, place, selection, out, owner, whole=whole, everything=take_all, same=out == text,
+                                        pasted=lambda: ui(self._convert_note, None))
+            if how == "back":
+                log.info("Convert: the user had gone elsewhere; went back to the box, replaced, returned")
+            elif not how:
+                log.info("Convert: the box changed, could not be reached or did not take the text; copied instead of replacing")
+                try:
+                    inputbox.set_clipboard_text(out, owner)
+                    ui(self.toast, t("没能放回原来的位置，转换结果已复制，按 Ctrl+V 粘贴"))
+                except OSError:  # another program is holding the clipboard: the result is shown instead, not lost
+                    log.warning("Convert: the clipboard was in use; showing the result in a window")
+                    ui(self._show_converted, out)
         except translator.Cancelled:
             log.info("Convert: cancelled with Esc; request aborted")
         except translator.TranslateError as e:
             log.warning("Convert failed: %s", e)
-            ui(self.show_error, str(e), open_config=e.open_config)
+            if not run.cancelled:  # (after Esc nobody is waiting for this conversion any more)
+                run.unselect()
+                ui(self.show_error, str(e), open_config=e.open_config)
         except Exception as e:
             log.exception("Convert crashed")
-            ui(self.show_error, t("转换时出错：{e}\n（详细信息见 运行日志.txt）", e=e))
+            if not run.cancelled:
+                run.unselect()
+                ui(self.show_error, t("转换时出错：{e}\n（详细信息见 运行日志.txt）", e=e))
         finally:
+            run.unselect()  # (when it ended some other way without the text being replaced: no text could be taken)
             if session:
                 session.close()
-            ui(self._convert_finished)
+            ui(self._convert_over, run)
 
     def _nothing_to_convert(self, whole):
         """Why nothing was taken, from what the box holds (None = it does not say)."""
+        import inputbox
         if whole is None:
             return t("先选中要转换的文字，再按 {hotkey}", hotkey=self.labels["convert"])
-        if not whole.replace("￼", "").strip():
+        if inputbox.blank(whole):
             return t("输入框里还没有字，没有转换")
-        import inputbox
         return t("输入框里的字太多（超过 {n} 字），请先选中要转换的那一段", n=inputbox.MAX_CHARS)
 
+    def _show_converted(self, text):
+        """The converted text in a window of its own: for when it could neither go into the box nor onto the clipboard."""
+        self.windows.append(TextPopup(self, t("转换结果"), text))
+
     def _convert_working(self, run, text):
-        """Show the "working on it" note, unless Esc got there first."""
-        if not run.cancelled:
+        """Show the "working on it" note, unless the conversion is over already (Esc got there first)."""
+        if run is self._convert_run and not run.cancelled:
             self._convert_note(text)
 
     def _convert_note(self, text):
-        """The small "working on it" note; None takes it away."""
+        """The small "working on it" note; None takes it away. It stays for as long as the conversion runs, however
+        long the model takes. While a screenshot is being selected none is shown (and none is kept for later, when
+        the conversion will be over)."""
         if self._convert_toast and self._convert_toast.alive:
             self._convert_toast.close()
         self._convert_toast = None
-        if text:
-            self.toast(text, seconds=60)
+        if text and self.selection is None:
+            self.toast(text, seconds=600)
             self._convert_toast = self._toast
 
-    def _convert_finished(self):
+    def _convert_over(self, run):
+        """A conversion has ended or been cancelled. Only the one under way has anything to wind up: one cancelled
+        earlier may still be finishing in the background while the next is already running."""
+        if run is not self._convert_run:
+            return
         self.converting = False
+        self._convert_run = None
         self._sync_esc()  # Esc goes back to the other programs
         if self._convert_toast and self._convert_toast is not self._toast:
             self._convert_toast = None  # another message has taken its place
@@ -1754,9 +1941,9 @@ def main():
         settings.ensure_files()
         try:
             refresh_icon_file(settings.ICON_PATH)
-            autostart.adopt_old_link()  # a "start with Windows" shortcut made under the program's earlier name
         except OSError:
-            log.exception("Updating the icon file or the startup shortcut failed")
+            log.exception("Updating the icon file failed")
+        threading.Thread(target=adopt_old_startup_link, name="startup-link", daemon=True).start()
         app = App()
     except settings.ConfigError as e:
         winapi.message_box(str(e), settings.APP_NAME)

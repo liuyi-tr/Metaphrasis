@@ -1,17 +1,19 @@
 """Work on the text selected in another program's input box: tell whether the place that has the keyboard can be
 typed into at all (asking Windows through UI Automation), take the selection, and put other text in its place.
 
-Keys are only ever sent to a place Windows says is an input box. The selection travels through the clipboard
-(Ctrl+C / Ctrl+V), which is the one way every program supports; what was on the clipboard before (text, a picture,
-copied files) is put back afterwards.
+Keys are only ever sent to a place Windows says is an input box (a terminal is not one: the same keys mean other
+things there). The selection travels through the clipboard (Ctrl+C / Ctrl+V), which is the one way every program
+supports; what was on the clipboard before (text, a picture, copied files) is put back afterwards.
 """
 import ctypes
+import logging
 import queue
 import threading
 import time
 from collections import namedtuple
 from ctypes import wintypes
 
+log = logging.getLogger("fanyi")  # only what happened is logged, never a word of the text or of the clipboard
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 ole32 = ctypes.WinDLL("ole32")
@@ -19,12 +21,20 @@ oleaut32 = ctypes.WinDLL("oleaut32")
 
 EDITABLE, READ_ONLY, PASSWORD, UNKNOWN = "editable", "readonly", "password", "unknown"
 MAX_CHARS = 5000  # longer selections are not taken: this is for messages, not documents
+# characters an empty box may hold all the same: the placeholder a browser reports for one, and zero-width marks
+_INVISIBLE = dict.fromkeys((0xFFFC, 0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF))
+
+
+def blank(text):
+    """Is there nothing to read in this text? (None, nothing but spaces, or only what an empty box holds.)"""
+    return not text or not text.translate(_INVISIBLE).strip()
+
 
 # ---------- can the focused control be typed into? ----------
 VT_I4, VT_BSTR, VT_BOOL = 3, 8, 11
 # UI Automation ids: properties, the text pattern, control types, a text attribute
-_CONTROL_TYPE, _IS_PASSWORD, _HAS_VALUE, _VALUE, _VALUE_READ_ONLY = 30003, 30019, 30043, 30045, 30046
-_TEXT_PATTERN, _EDIT, _COMBO_BOX, _IS_READ_ONLY_ATTRIBUTE = 10014, 50004, 50003, 40015
+_CONTROL_TYPE, _CLASS_NAME, _IS_PASSWORD, _HAS_VALUE, _VALUE, _VALUE_READ_ONLY = 30003, 30012, 30019, 30043, 30045, 30046
+_TEXT_PATTERN, _EDIT, _TEXT, _DOCUMENT, _IS_READ_ONLY_ATTRIBUTE = 10014, 50004, 50020, 50030, 40015
 # positions in the COM method tables (UIAutomationClient.h)
 _RELEASE = 2                                               # IUnknown
 _COMPARE_ELEMENTS, _GET_FOCUSED_ELEMENT = 3, 8             # IUIAutomation
@@ -111,7 +121,8 @@ def _range_read_only(text_range):
 
 def _describe(element):
     """What Windows knows about an element:
-    {"type", "password", "has_value", "value_read_only", "read_only" (None = not said),
+    {"type", "class" (the program's own name for this kind of control), "password", "has_value", "value_read_only",
+     "read_only" (None = not said),
      "selection" and "whole": the selected text and all the text of the box (None = cannot be read)}."""
     held = []  # COM objects to let go of
 
@@ -120,7 +131,7 @@ def _describe(element):
         return pointer
 
     try:
-        found = {"type": _property(element, _CONTROL_TYPE), "password": bool(_property(element, _IS_PASSWORD)),
+        found = {"type": _property(element, _CONTROL_TYPE), "class": _property(element, _CLASS_NAME), "password": bool(_property(element, _IS_PASSWORD)),
                  "has_value": bool(_property(element, _HAS_VALUE)), "value_read_only": None, "selection": None, "whole": None, "read_only": None}
         if found["has_value"]:
             found["value_read_only"] = bool(_property(element, _VALUE_READ_ONLY))
@@ -156,19 +167,38 @@ def _describe(element):
             _release(pointer)
 
 
+# Terminals. They can be typed into, and say so, but they are no place for this: Ctrl+C there stops the program that
+# is running, and lines pasted there are run as commands. Told by the window they are in (the Windows console, Windows
+# Terminal, ConEmu, mintty, PuTTY, KiTTY) or by the control itself (Windows Terminal's, and the hidden text box of
+# xterm.js, which is the terminal inside VS Code and many other apps)
+_TERMINAL_WINDOWS = ("consolewindowclass", "cascadia_hosting_window_class", "virtualconsoleclass", "mintty", "putty", "kitty")
+_TERMINAL_CONTROLS = ("termcontrol", "xterm")
+
+
+def _is_terminal(found):
+    return ((found.get("window") or "").lower() in _TERMINAL_WINDOWS
+            or any(word in (found.get("class") or "").lower() for word in _TERMINAL_CONTROLS))
+
+
 def classify(found):
-    """EDITABLE / READ_ONLY / PASSWORD / UNKNOWN from what _describe() found (None = Windows told us nothing)."""
+    """EDITABLE / READ_ONLY / PASSWORD / UNKNOWN from what _describe() found (None = Windows told us nothing).
+
+    EDITABLE is a place where text is typed. A checkbox, a slider or a drop-down list also holds a value that can be
+    changed, and browsers report that, but none of them is a text box: without word from the program that the text
+    at the caret can be changed, only a control of the "edit" kind counts."""
     if not found:
         return UNKNOWN
     if found["password"]:
         return PASSWORD
+    if _is_terminal(found):
+        return UNKNOWN
     if found["has_value"] and found["value_read_only"]:
         return READ_ONLY
-    if found["read_only"] is not None:  # the program says outright whether the text at the caret can be changed
+    if found["read_only"] is not None and found["type"] != _TEXT:  # the program says outright whether the text at the caret can be changed
         return READ_ONLY if found["read_only"] else EDITABLE
-    if found["has_value"] or found["type"] in (_EDIT, _COMBO_BOX):
+    if found["type"] == _EDIT or (found["type"] == _DOCUMENT and found["has_value"]):
         return EDITABLE
-    return UNKNOWN  # a button, a picture, a page, or a program that tells Windows nothing: not known to be a place to type
+    return UNKNOWN  # a button, a list, a picture, a page, or a program that tells Windows nothing: not known to be a place to type
 
 
 Focus = namedtuple("Focus", "kind selection whole")  # selection / whole: None when the program does not let them be read
@@ -203,7 +233,8 @@ class Session:
                 function, result, done = task
                 try:
                     result.append(function())
-                except Exception:  # a misbehaving program must not take the conversion down with it
+                except Exception as e:  # a misbehaving program must not take the conversion down with it
+                    log.warning("Asking Windows about the place that has the keyboard failed (%s)", type(e).__name__)
                     result.append(None)
                 done.set()
         finally:
@@ -239,6 +270,7 @@ class Session:
         if not element:
             return None
         found = _describe(element)
+        found["window"] = _window_class(user32.GetForegroundWindow())
         if keep and classify(found) == EDITABLE:
             _release(self._box)
             self._box = element
@@ -315,6 +347,7 @@ class GUITHREADINFO(ctypes.Structure):
 
 
 user32.GetForegroundWindow.restype = wintypes.HWND
+user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
 user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
 user32.GetWindowThreadProcessId.restype = wintypes.DWORD
 user32.GetGUIThreadInfo.argtypes = [wintypes.DWORD, ctypes.POINTER(GUITHREADINFO)]
@@ -322,6 +355,12 @@ user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
 user32.GetAsyncKeyState.restype = ctypes.c_short
 user32.keybd_event.argtypes = [wintypes.BYTE, wintypes.BYTE, wintypes.DWORD, ctypes.c_size_t]
 user32.keybd_event.restype = None
+
+
+def _window_class(window):
+    """The kind of window, as its program registered it ("" when there is none)."""
+    name = ctypes.create_unicode_buffer(256)
+    return name.value if window and user32.GetClassNameW(window, name, 256) else ""
 
 
 def focus_place():
@@ -398,17 +437,26 @@ MAX_KEPT = 256 * 1024 * 1024
 _NOT_FOR_HISTORY = "ExcludeClipboardContentFromMonitorProcessing"  # asks clipboard-history tools to leave an entry out
 
 
+def sequence():
+    """A number that goes up each time anything is put on the clipboard: compared before and after, it tells whether
+    somebody (the user, another program) has copied something in between."""
+    return user32.GetClipboardSequenceNumber()
+
+
 def snapshot(owner):
-    """What is on the clipboard, to put back later: {format: bytes}. {} when it is empty, or holds nothing we can keep."""
+    """What is on the clipboard, to put back later: {format: bytes}; {} when the clipboard is empty.
+    None when it cannot be kept: another program has the clipboard open, it holds more than MAX_KEPT, or nothing it
+    holds is of a kind that is kept."""
     if not _open(owner):
-        return {}
+        return None
     try:
         wanted = set(_KEPT) | {user32.RegisterClipboardFormatW(name) for name in _KEPT_NAMES}
-        saved, total, fmt = {}, 0, 0
+        saved, total, fmt, kinds = {}, 0, 0, 0
         while True:
             fmt = user32.EnumClipboardFormats(fmt)
             if not fmt:
-                return saved
+                return saved if saved or not kinds else None
+            kinds += 1
             if fmt not in wanted:
                 continue
             handle = user32.GetClipboardData(fmt)
@@ -419,7 +467,7 @@ def snapshot(owner):
             try:
                 total += size
                 if total > MAX_KEPT:
-                    return {}
+                    return None
                 saved[fmt] = ctypes.string_at(pointer, size)
             finally:
                 kernel32.GlobalUnlock(handle)
@@ -428,21 +476,30 @@ def snapshot(owner):
 
 
 def restore(saved, owner):
-    """Put back what snapshot() took. Nothing was kept -> the clipboard is left as it is."""
-    if not saved or not _open(owner):
-        return
+    """Put back what snapshot() took ({}: the clipboard was empty, and is emptied again). None: nothing was kept, and
+    the clipboard is left as it is. True when all of it went back."""
+    if saved is None:
+        return False
+    if not _open(owner):
+        log.warning("The clipboard was in use by another program; what it held before could not be put back")
+        return False
+    lost = 0
     try:
         user32.EmptyClipboard()
         for fmt, data in saved.items():
             try:
                 _put(fmt, data)
             except OSError:
-                pass
-        _put(user32.RegisterClipboardFormatW(_NOT_FOR_HISTORY), b"\x00\x00\x00\x00")
+                lost += 1
+        if saved:
+            _put(user32.RegisterClipboardFormatW(_NOT_FOR_HISTORY), b"\x00\x00\x00\x00")
     except OSError:
-        pass
+        lost += 1
     finally:
         user32.CloseClipboard()
+    if lost:
+        log.warning("Putting back what the clipboard held: %d of its %d kinds of content could not be written", lost, len(saved))
+    return not lost
 
 
 def clipboard_text(owner):
@@ -477,41 +534,68 @@ def set_clipboard_text(text, owner, passing=False):
         user32.CloseClipboard()
 
 
+# ---------- the keys ----------
 def select_all(session, timeout=0.8):
     """Have the focused program select everything in the box (Ctrl+A). Returns the selection it reports afterwards
-    (waiting for it to show one), or None when it is a program that cannot say what is selected."""
+    (waiting for it to show one), or None when it is a program that cannot say what is selected. "" as well when the
+    key was not sent: the user is holding Ctrl, Alt, Shift or Win, which would join it."""
+    if not wait_keys_up(timeout=1.0):
+        return ""
     _chord(0x41)  # A
     end = time.monotonic() + timeout
     while True:
         time.sleep(0.08)
         selection = session.look(tries=1).selection
-        if selection is None or selection.strip() or time.monotonic() > end:
+        if selection is None or not blank(selection) or time.monotonic() > end:
             return selection
 
 
 def copy_selection(owner, timeout=1.0):
-    """Have the focused program copy its selection and return it; None when nothing was selected."""
-    before = user32.GetClipboardSequenceNumber()
+    """Have the focused program copy its selection and return it; None when it gave no text (nothing was selected,
+    or the key was not sent: the user is holding Ctrl, Alt, Shift or Win). Whether the clipboard was written to at
+    all is for the caller to tell from sequence(): a program may copy something that is not text."""
+    if not wait_keys_up(timeout=1.0):
+        return None
+    before = sequence()
     _chord(0x43)  # C
     end = time.monotonic() + timeout
     while time.monotonic() < end:
-        if user32.GetClipboardSequenceNumber() != before:
+        if sequence() != before:
             time.sleep(0.05)  # some programs write the clipboard in two steps
             return clipboard_text(owner) or None
         time.sleep(0.02)
     return None
 
 
-def paste(text, owner):
-    """Replace the focused program's selection with text."""
-    set_clipboard_text(text, owner, passing=True)
-    _chord(0x56)  # V
+def _tap(key):
+    """Press one key on its own."""
+    user32.keybd_event(key, 0, 0, 0)
+    user32.keybd_event(key, 0, 2, 0)
 
 
-def _hands_off(quiet=0.25, timeout=4.0):
-    """Wait for a moment in which no key and no mouse button is down (the user is not in the middle of typing or
-    dragging): keys pressed while the keyboard is briefly taken elsewhere would land in the wrong place."""
-    keys = [k for k in range(1, 255) if k not in (0x14, 0x90, 0x91)]  # every key and button, bar the lock keys
+def unselect(session, place, selected):
+    """Take away a selection the program made itself (Ctrl+A) when nothing is going to replace it after all: left as
+    it is, the next key the user typed would wipe the whole message. The caret goes to the end of the text (the Right
+    arrow key). Only when the box still has the keyboard and still shows that very selection; a box that cannot say
+    what is selected is left alone. True when the key was sent."""
+    if not selected or focus_place() != place or not session.box_focused():
+        return False
+    if session.look(tries=1).selection != selected or not wait_keys_up(timeout=0.3) or focus_place() != place:
+        return False
+    _tap(0x27)  # Right
+    return True
+
+
+# keys that are no sign of anybody typing: the lock keys, and the mode keys of a Japanese keyboard, one of which
+# always reads as held down
+_NOT_PRESSED = frozenset((0x14, 0x90, 0x91)) | frozenset(range(0xF0, 0xF6))
+
+
+def _hands_off(quiet=0.6, timeout=4.0):
+    """Wait until the user's hands are off the keyboard and the mouse buttons: no key and no button down for `quiet`
+    seconds on end. Keys pressed while the keyboard is briefly taken elsewhere would land in the wrong place, and the
+    gap between two keys of somebody who is typing is shorter than that. False when no such moment comes in time."""
+    keys = [k for k in range(1, 255) if k not in _NOT_PRESSED]
     end = time.monotonic() + timeout
     calm = time.monotonic()
     while time.monotonic() < end:
@@ -532,45 +616,94 @@ def _foreground(window):
     winapi.force_foreground(window)
 
 
-def put_in_place(session, place, selection, text, owner, whole=None):
-    """Replace the box's selection with text. Returns "direct" or "back" (the box had to be gone back to) when it was
-    done, "" when it was not.
+def _landed(session, before, same, timeout=1.0):
+    """Has the box taken the paste? True: its text is no longer what it was. False: it still is, `timeout` later.
+    None: there is no telling (the box does not let its text be read, or what went in is letter for letter what was
+    there); it is then given the moment a program needs to take a paste.
 
-    place / selection: where the keyboard was and what the box said was selected when the text was taken (None: it is
-    a box that cannot say). whole: for a conversion of everything in the box, all its text at that time.
-
-    The user may have clicked somewhere else since. That alone does not cancel the replacement: the box is given the
-    keyboard back for a moment, and if it still has the same text selected, the text goes in and the keyboard returns
-    to where the user was. With everything-in-the-box conversions an unchanged box is simply selected again. Only when
-    the box cannot be reached, or its content has changed, is nothing typed."""
-    away = None
-    if focus_place() != place or not session.box_focused():
-        if selection is None or not _hands_off():
+    before: the box as it was just before the paste."""
+    readable = before.whole is not None and len(before.whole) <= MAX_CHARS
+    if same or not (readable or before.selection is not None):
+        time.sleep(0.35)
+        return None
+    end = time.monotonic() + timeout
+    while True:
+        time.sleep(0.04)
+        now = session.box()
+        if (now.whole != before.whole) if readable else (now.selection != before.selection):
+            return True
+        if time.monotonic() > end:
             return False
-        away = _front()
-        session.mark_away()
-        _foreground(place[0])
-        session.focus_box()
-        end = time.monotonic() + 1.0
-        while not (_front() == place[0] and session.box_focused()):
-            if time.monotonic() > end:
-                break
-            time.sleep(0.03)
-    done = _front() == place[0] and (away is None or session.box_focused())
-    if done and selection is not None:
-        now = session.look(tries=1)
-        if now.selection != selection:
+
+
+def put_in_place(session, place, selection, text, owner, whole=None, everything=False, same=False, pasted=None):
+    """Replace the box's selection with text. Returns "direct", or "back" (the box had to be gone back to), when the
+    text went in; "" when nothing was typed, or the box did not take it. After "" the caller still has the text to
+    hand over some other way, and the clipboard may or may not hold it.
+
+    place / selection / whole: where the keyboard was, what the box said was selected, and all the text it held, when
+    the text was taken (None: it is a box that cannot say). everything: the conversion is of all the text in the box
+    (the program selected it itself). same: what goes in is letter for letter what is selected (the box will look no
+    different afterwards). pasted(): called as soon as the text is in.
+
+    The user may have clicked somewhere else since. That alone does not cancel the replacement: once their hands are
+    off the keyboard, the box is given the keyboard back for a moment, and if it still has the same text selected,
+    the text goes in and the keyboard returns to where the user was. With everything-in-the-box conversions an
+    unchanged box is simply selected again. Only when the box cannot be reached, or its content has changed, is
+    nothing typed.
+
+    The clipboard carries the text into the box. What it holds at that moment (the user may have copied something
+    while the API worked) is taken first, and put back once the box has taken the paste, unless something else has
+    been copied in the meantime."""
+    away = kept = mine = landed = None
+    done = False
+    try:
+        if focus_place() != place or not session.box_focused():
+            if selection is None or not _hands_off():
+                return ""
+            away = _front()
+            session.mark_away()
+            _foreground(place[0])
+            session.focus_box()
+            end = time.monotonic() + 0.6
+            while not (_front() == place[0] and session.box_focused()) and time.monotonic() < end:
+                time.sleep(0.03)
+        ok = _front() == place[0] and session.box_focused()
+        before = session.look(tries=1) if ok else None
+        if ok and selection is not None and before.selection != selection:
             # the selection is gone (a click into the text): with everything-in-the-box conversions, an unchanged box is selected again
-            done = whole is not None and now.whole == whole and select_all(session) == selection
-    if done and wait_keys_up(timeout=1.0):
-        paste(text, owner)
-        if away is not None:
-            time.sleep(0.35)  # the box takes the paste before the keyboard leaves it again
-    else:
-        done = False
-    if away is not None:  # back to where the user was
-        if away != place[0]:
-            _foreground(away)
-        else:
-            session.focus_away()
-    return ("direct" if away is None else "back") if done else ""
+            ok = everything and before.whole == whole and select_all(session) == selection
+            before = before._replace(selection=selection)
+        elif ok and selection is None and whole is not None:
+            # a box that cannot say what is selected: its text at least must be what it was. With everything-in-the-box
+            # conversions all of it is selected once more (a click into it would have left only a caret)
+            ok = before.whole == whole
+            if ok and everything:
+                select_all(session)
+        if ok:
+            kept = snapshot(owner)
+            set_clipboard_text(text, owner, passing=True)
+            mine = sequence()
+            # the last look before the key goes: nothing held down that would join it, and the keyboard still in the box
+            if wait_keys_up(timeout=1.0) and _front() == place[0] and session.box_focused():
+                _chord(0x56)  # V
+                # (waited for less long when the keyboard was taken from somewhere else: it is due back there)
+                landed = _landed(session, before, same, timeout=2.0 if away is None else 1.0)
+                done = landed is not False
+    except OSError:
+        log.warning("The clipboard was in use by another program; the text could not be put on it")
+    finally:
+        if away is not None:  # back to where the user was
+            if away != place[0]:
+                _foreground(away)
+            else:
+                session.focus_away()
+    if not done:
+        return ""
+    if pasted:
+        pasted()
+    if landed is None:
+        time.sleep(0.65)  # a box that cannot be read: a program takes a paste well within a second of the key
+    if sequence() == mine:  # (if not, something else has been copied meanwhile: that stays)
+        restore(kept, owner)
+    return "direct" if away is None else "back"
