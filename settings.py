@@ -100,8 +100,12 @@ COMPANIES = (
     ("ollama", "Ollama", "http://localhost:11434/v1"),
     ("custom", "", ""),
 )
+# Companies that got an entry of their own in 1.1. To the versions before, their addresses were "custom" endpoints, to
+# which no thinking setting was ever sent (see _forget_stale_effort)
+NAMED_SINCE_1_1 = ("hunyuan", "grok")
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 MODES = {"overlay": "overlay", "覆盖": "overlay", "popup": "popup", "弹窗": "popup"}
+HOTKEY_OFF = ("off", "none", "no", "false", "0", "关", "关闭", "關閉")  # written in place of the keys: this hotkey is not wanted
 
 DEFAULT_CONFIG = """\
 ; ================== Metaphrasis 配置文件 ==================
@@ -149,6 +153,7 @@ capture = Alt+~
 ; 切换显示模式：覆盖在原文上 <-> 弹窗显示文字（并复制到剪贴板）
 toggle_mode = Ctrl+Alt+Y
 ; 输入框转换：在能打字的地方打完字按这个键，输入框里的字就地换成另一种语言（选中了一段就只换那一段）
+; 不想用这个功能，就写 convert = off
 convert = Alt+1
 
 [display]
@@ -174,7 +179,7 @@ ui_language = auto
 """),
     ("convert_language", """\
 ; 输入框转换成哪种语言：在能打字的地方打完字按快捷键（默认 Alt+1），输入框里的字就地换成这种语言，说法口语化；选中了一段就只换那一段
-; 托盘菜单里也能选。快捷键想换一个，就在上面 [hotkey] 里写一行 convert = 组合键，然后重启
+; 托盘菜单里也能选。快捷键想换一个，就在上面 [hotkey] 里写一行 convert = 组合键（不想用这个功能就写 convert = off），然后重启
 convert_language = English
 """),
     ("skip_chinese", """\
@@ -248,6 +253,7 @@ capture = Alt+~
 ; Switch display mode: overlay on the original <-> popup text (also copied to the clipboard)
 toggle_mode = Ctrl+Alt+Y
 ; Convert in place: press this key after typing in an input box and what you typed is replaced by the other language (with a selection, only that part)
+; To do without this feature, write convert = off
 convert = Alt+1
 
 [display]
@@ -272,7 +278,7 @@ ui_language = auto
 """),
     ("convert_language", """\
 ; Convert in place: press the hotkey (Alt+1 by default) after typing in an input box and what you typed is replaced by this language, worded the way people talk; with a selection, only that part
-; You can also pick it from the tray menu. To change the hotkey, add a line convert = <keys> under [hotkey] above and restart
+; You can also pick it from the tray menu. To change the hotkey, add a line convert = <keys> under [hotkey] above (to do without this feature, convert = off) and restart
 convert_language = English
 """),
     ("skip_chinese", """\
@@ -331,6 +337,10 @@ _LEGACY_ZH_BLOCKS = {
                          "; （设置 → 时间和语言 → 语言和区域 → 添加语言 → 日本語，勾选“光学字符识别”），可装可不装。"]],
     "save_history": [["; 翻译记录：true = 把每次的原文和译文追加到本文件夹的 翻译记录.txt（密钥会自动打码）",
                       "; （你之前的版本一直在记录，升级后保持开启；不想要就改成 false）"]],
+    # (before these two said how to switch the hotkey off)
+    "convert": [["; 输入框转换：在能打字的地方打完字按这个键，输入框里的字就地换成另一种语言（选中了一段就只换那一段）"]],
+    "convert_language": [["; 输入框转换成哪种语言：在能打字的地方打完字按快捷键（默认 Alt+1），输入框里的字就地换成这种语言，说法口语化；选中了一段就只换那一段",
+                          "; 托盘菜单里也能选。快捷键想换一个，就在上面 [hotkey] 里写一行 convert = 组合键，然后重启"]],
 }
 _LEGACY_EN_BLOCKS = {
     "model": [["; Model name. With provider = claude, one of:",
@@ -342,6 +352,9 @@ _LEGACY_EN_BLOCKS = {
     "base_url": [_EN_ADDRESSES[:2] + [_EN_ADDRESSES[2] + "      (no image input; translates from OCR text only)"] + _EN_ADDRESSES[3:], _EN_ADDRESSES],
     "save_history": [["; History: true = append every source and translation to 翻译记录.txt in this folder (keys are masked)",
                       "; (your previous version always recorded; kept on after the upgrade, set false if you don't want it)"]],
+    "convert": [["; Convert in place: press this key after typing in an input box and what you typed is replaced by the other language (with a selection, only that part)"]],
+    "convert_language": [["; Convert in place: press the hotkey (Alt+1 by default) after typing in an input box and what you typed is replaced by this language, worded the way people talk; with a selection, only that part",
+                          "; You can also pick it from the tray menu. To change the hotkey, add a line convert = <keys> under [hotkey] above and restart"]],
 }
 _UPGRADE_NOTE = {"zh": ("; 默认 false：不记录任何内容。想回看历史再打开。", "; （你之前的版本一直在记录，升级后保持开启；不想要就改成 false）"),
                  "en": ("; Default false: nothing is recorded. Turn it on if you want to look back.", "; (your previous version always recorded; kept on after the upgrade, set false if you don't want it)")}
@@ -464,6 +477,10 @@ def localize_config_comments(lang):
                 i = j + len(dst[key])
                 changed += 1
         i += 1
+    for i, line in enumerate(parts):  # the note the program writes above the settings of a company that is put aside
+        if line.rstrip() == _SAVED_NOTE[src_lang]:
+            parts[i] = _SAVED_NOTE[lang]
+            changed += 1
     if changed:
         out = "".join(c + e for c, e in zip(parts, ends))
         CONFIG_PATH.write_bytes((codecs.BOM_UTF8 if bom else b"") + out.encode("utf-8"))
@@ -574,6 +591,12 @@ def load_config():
     parser = configparser.ConfigParser(interpolation=None, comment_prefixes=(";", "#"),
                                        inline_comment_prefixes=None, strict=False)
     text = read_text(CONFIG_PATH)
+    if "convert_language" not in text:  # a file last written by a version before 1.1
+        try:
+            if _forget_stale_effort():
+                text = read_text(CONFIG_PATH)
+        except OSError:
+            pass
     addition = ""
     lang = comment_language(text)  # appended explanations match the language of the comments already in the file
     blocks = _option_blocks(lang)
@@ -643,7 +666,7 @@ def load_config():
         company=company,
         capture_hotkey=get("hotkey", "capture", "Alt+~") or "Alt+~",
         toggle_hotkey=get("hotkey", "toggle_mode", "Ctrl+Alt+Y") or "Ctrl+Alt+Y",
-        convert_hotkey=get("hotkey", "convert", "Alt+1") or "Alt+1",
+        convert_hotkey="" if get("hotkey", "convert").lower() in HOTKEY_OFF else get("hotkey", "convert", "Alt+1") or "Alt+1",  # "" = switched off
         convert_language=(get("options", "convert_language", "English") or "English"),
         mode=mode,
         skip_chinese=flag("skip_chinese"),
@@ -778,6 +801,25 @@ def set_api_value(key, value):
     """Change one key of the API settings in use (api_key, model, effort): only that line changes."""
     text, bom, nl = _read_config()
     _write_config(_set_in(text, _active_section(text) or "api", key, value, nl), bom)
+
+
+def _forget_stale_effort():
+    """For a config file that comes from a version before 1.1 and names the address of a company that had no entry
+    of its own then (Grok, Tencent Hunyuan): that version took the address for a custom endpoint and sent it no
+    thinking setting, whatever the effort line said (it was the template's "low", meant for Claude, left standing).
+    The line is emptied, so that this version goes on sending nothing until a level is chosen from the tray menu.
+    Only that line changes. True when it was changed.
+
+    The caller sees to it that this happens once: only while the file lacks the options 1.1 adds, which are added in
+    the same go."""
+    text, bom, nl = _read_config()
+    section = _active_section(text)
+    if not section or (_get_in(text, section, "provider") or "claude").lower() != "openai":
+        return False
+    if company_of("openai", _get_in(text, section, "base_url") or "") not in NAMED_SINCE_1_1 or not _get_in(text, section, "effort"):
+        return False
+    _write_config(_set_in(text, section, "effort", "", nl), bom)
+    return True
 
 
 def saved_companies():

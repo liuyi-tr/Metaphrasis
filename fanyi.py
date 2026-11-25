@@ -980,6 +980,8 @@ class App:
         for name, text, default in (("capture", self.cfg.capture_hotkey, "Alt+~"),
                                     ("toggle", self.cfg.toggle_hotkey, "Ctrl+Alt+Y"),
                                     ("convert", self.cfg.convert_hotkey, "Alt+1")):
+            if name == "convert" and not text:
+                continue  # switched off in config.ini (convert = off): the key stays with the other programs
             try:
                 mods, vk = winapi.parse_hotkey(text)
             except ValueError as e:
@@ -988,7 +990,7 @@ class App:
                 text = default
                 mods, vk = winapi.parse_hotkey(default)
             bindings[name] = (text, mods, vk)
-        self.labels = {name: b[0] for name, b in bindings.items()}
+        self.labels = {"convert": "", **{name: b[0] for name, b in bindings.items()}}  # "": that hotkey is switched off
         self.hotkeys = winapi.HotkeyThread(bindings, self.events)
         self.hotkeys.start()
 
@@ -1061,7 +1063,7 @@ class App:
             item(lambda it: t("输入框转换成"), pystray.Menu(
                 *lang_items("convert", lambda c: settings.lang_code(self.cfg.convert_language) == c),
                 pystray.Menu.SEPARATOR,
-                item(lambda it: t("快捷键：{hotkey}", hotkey=self.labels['convert']), lambda icon, it: None, enabled=False),
+                item(lambda it: t("快捷键：{hotkey}", hotkey=self.labels['convert'] or t("已关闭")), lambda icon, it: None, enabled=False),
             )),
             item(lambda it: t("界面语言"), pystray.Menu(*lang_items("ui", lambda c: i18n.current() == c))),
             pystray.Menu.SEPARATOR,
@@ -1123,8 +1125,13 @@ class App:
                 else:
                     self.cancel_convert()
         elif kind == "hotkey_failed":
-            self.show_error(t("快捷键 {key} 注册失败，可能已经被其他程序占用。\n\n请在 config.ini 的 [hotkey] 里换一个组合，"
-                              "然后重启本工具（托盘图标右键 → 退出，再双击启动）。", key=ev[1]), open_config=True)
+            if ev[2:] == ("convert",):  # a config file from an earlier version has no line for this one: say what to write
+                message = t("输入框转换的快捷键 {key} 注册失败，可能已经被其他程序占用。\n\n请在 config.ini 的 [hotkey] 里加一行 convert = 别的组合键"
+                            "（已经有这一行就直接改），不想用这个功能就写 convert = off，然后重启本工具（托盘图标右键 → 退出，再双击启动）。", key=ev[1])
+            else:
+                message = t("快捷键 {key} 注册失败，可能已经被其他程序占用。\n\n请在 config.ini 的 [hotkey] 里换一个组合，"
+                            "然后重启本工具（托盘图标右键 → 退出，再双击启动）。", key=ev[1])
+            self.show_error(message, open_config=True)
         elif kind == "tray":
             self._tray_action(ev[1])
         elif kind == "job_progress":
@@ -1637,7 +1644,7 @@ class App:
 
     def start_convert(self):
         """Hotkey: what is selected in an input box is replaced, in place, by the same thing said in another language."""
-        if self.converting or self.selection is not None:
+        if self.converting or self.selection is not None or "convert" not in self.hotkeys.bindings:
             return
         cfg = self._checked_config()
         if cfg is None:

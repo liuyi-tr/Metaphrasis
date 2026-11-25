@@ -200,6 +200,12 @@ STRINGS = {
         "en": "Could not register the hotkey {key}; another program probably uses it.\n\nChange it under [hotkey] in config.ini, then restart the tool (right-click the tray icon → Quit, then start it again).",
         "ja": "ショートカット {key} を登録できませんでした。他のプログラムが使用している可能性があります。\n\nconfig.ini の [hotkey] で別の組み合わせに変更し、ツールを再起動してください（トレイアイコンを右クリック → 終了、その後もう一度起動）。",
         "ko": "단축키 {key}을(를) 등록하지 못했습니다. 다른 프로그램이 사용 중일 수 있습니다.\n\nconfig.ini의 [hotkey]에서 다른 조합으로 바꾼 뒤 도구를 다시 시작하세요(트레이 아이콘 우클릭 → 종료 후 다시 실행)."},
+    "输入框转换的快捷键 {key} 注册失败，可能已经被其他程序占用。\n\n请在 config.ini 的 [hotkey] 里加一行 convert = 别的组合键（已经有这一行就直接改），不想用这个功能就写 convert = off，然后重启本工具（托盘图标右键 → 退出，再双击启动）。": {
+        "zh-tw": "輸入框轉換的快捷鍵 {key} 註冊失敗，可能已經被其他程式佔用。\n\n請在 config.ini 的 [hotkey] 裡加一行 convert = 別的組合鍵（已經有這一行就直接改），不想用這個功能就寫 convert = off，然後重新啟動本工具（系統匣圖示右鍵 → 結束，再按兩下啟動）。",
+        "en": "Could not register {key}, the hotkey for converting what you typed; another program probably uses it.\n\nUnder [hotkey] in config.ini, add a line convert = <other keys> (or change the line if it is there); to do without this feature, write convert = off. Then restart the tool (right-click the tray icon → Quit, then start it again).",
+        "ja": "入力欄変換のショートカット {key} を登録できませんでした。他のプログラムが使用している可能性があります。\n\nconfig.ini の [hotkey] に convert = 別の組み合わせ の行を追加してください（すでにある場合はその行を変更）。この機能を使わない場合は convert = off と書きます。その後ツールを再起動してください（トレイアイコンを右クリック → 終了、その後もう一度起動）。",
+        "ko": "입력창 변환 단축키 {key}을(를) 등록하지 못했습니다. 다른 프로그램이 사용 중일 수 있습니다.\n\nconfig.ini의 [hotkey]에 convert = 다른 조합 줄을 추가하세요(이미 있으면 그 줄을 고치세요). 이 기능을 쓰지 않으려면 convert = off 라고 쓰세요. 그런 다음 도구를 다시 시작하세요(트레이 아이콘 우클릭 → 종료 후 다시 실행)."},
+    "已关闭": {"zh-tw": "已關閉", "en": "off", "ja": "オフ", "ko": "꺼짐"},
     "截屏失败：{e}": {"zh-tw": "截圖失敗：{e}", "en": "Screen capture failed: {e}", "ja": "画面のキャプチャに失敗しました：{e}", "ko": "화면 캡처에 실패했습니다: {e}"},
     "缺少运行组件，请双击“{bat}”。\n{e}": {"zh-tw": "缺少執行元件，請按兩下“{bat}”。\n{e}", "en": "A required component is missing. Double-click “{bat}”.\n{e}", "ja": "必要なコンポーネントがありません。“{bat}” をダブルクリックしてください。\n{e}", "ko": "필요한 구성 요소가 없습니다. “{bat}”을(를) 더블클릭하세요.\n{e}"},
     "框选的内容本来就是{lang}，没有调用翻译": {"zh-tw": "框選的內容本來就是{lang}，沒有呼叫翻譯", "en": "The selection is already in {lang}; nothing was translated", "ja": "選択した内容はすでに{lang}のため、翻訳しませんでした", "ko": "선택한 내용이 이미 {lang}이므로 번역하지 않았습니다"},

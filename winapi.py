@@ -254,7 +254,7 @@ class HotkeyThread(threading.Thread):
             if user32.RegisterHotKey(None, i, mods | MOD_NOREPEAT, vk):
                 ids[i] = (name, mods)
             else:
-                self.events.put(("hotkey_failed", label))
+                self.events.put(("hotkey_failed", label, name))
         self._ready.set()
         while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
             if msg.message == WM_HOTKEY:

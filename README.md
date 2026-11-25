@@ -95,7 +95,7 @@ It works anywhere you can type: a chat window, a search box, an input box on a w
 
 - With nothing selected the whole input box is converted; with a selection, only that part.
 - Text that is already in the target language is not handed back as typed: spelling, grammar, word order, capital letters and punctuation are put right. File names, paths, commands and code are left alone, letter for letter.
-- Pick the language under **Convert typed text to** in the tray menu, or write `convert_language` in `config.ini`; any language works. To change the hotkey, add a line `convert = <keys>` under `[hotkey]`.
+- Pick the language under **Convert typed text to** in the tray menu, or write `convert_language` in `config.ini`; any language works. To change the hotkey, add a line `convert = <keys>` under `[hotkey]`; to do without the feature altogether, write `convert = off` there, and Alt + 1 stays with your other programs.
 - Changed your mind while it is working? Press Esc: the conversion is cancelled at once and the text in the box stays as it was. If the program had selected the text itself, the selection is taken away again, so that typing on does not wipe your message. Once the text has started going in, it is too late.
 - What goes in is real text: Ctrl + Z in that program takes it back.
 - If you click somewhere else while it is working, that is fine: once your hands have been off the keyboard for a moment, the program goes back to the input box, replaces the text, and returns you to where you were. If it cannot get back (you are busy typing somewhere else, say), or the box no longer holds what it held, it leaves the box alone, puts the result on the clipboard and tells you to paste it.
