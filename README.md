@@ -2,41 +2,46 @@
 
 # Metaphrasis
 
-Screen translation for Windows. Press a hotkey, drag a box around any text on the screen, and a few seconds later the translation is drawn over the original, in the same size, weight and alignment. The translating is done by a large language model through your own API key: Claude, or any service whose API follows the OpenAI format (ChatGPT, DeepSeek, Qwen, Kimi, Gemini, a local Ollama).
+[中文说明](README.zh-CN.md)
+
+A small translation tool for Windows that runs on your own AI API key. It does two things:
+
+- **Screen translation.** Press Alt + ~, drag a box around any text on the screen, and a few seconds later the translation is drawn over the original, in the same size, weight and alignment.
+- **Convert what you typed.** Anywhere you can type, write in your own language, press Alt + 1, and what is in the input box is replaced in place by natural English (or another language you pick). English you typed yourself gets tidied up too.
 
 <p align="center"><img src="docs/demo.gif" width="672"></p>
 
-It translates into Chinese by default; the target can be switched to English, Japanese or any other language from the tray menu or the config file. The interface follows your Windows language (English, Simplified and Traditional Chinese, Japanese, Korean) and can be switched from the tray menu too. [中文说明](README.zh-CN.md)
-
-There is a second thing it does, for typing: anywhere you can type, write in your own language, press Alt + 1, and what is in the input box is replaced in place by natural English (or another language you pick). English you typed yourself gets tidied up too. See [Convert what you typed](#convert-what-you-typed).
-
-The tray menu, Chinese and English interface:
-
-<p align="center"><img src="docs/tray.png" width="620"></p>
-
 <p align="center"><img src="docs/english.png" width="780"></p>
 
-## Why
+There are plenty of translation extensions for browsers. Outside the browser, in desktop apps, chat windows, PDF readers, a paused video, I never found one I liked, and machine translation is hard to read. This fills that gap. If you have an AI API key and want it to do something useful day to day, try it.
 
-If you have an AI API key and want it to do something useful day to day, try this. There are plenty of translation extensions for browsers. Outside the browser, in desktop apps, chat windows, PDF readers, a paused video, I never found one I liked, and machine translation is hard to read. This fills that gap.
+It translates from any language into any language. The interface comes in English, Simplified Chinese, Traditional Chinese, Japanese and Korean. Windows 10 / 11 only.
 
-What it costs depends on the model. Here is my own usage for the last 30 days, from the Claude Console, filtered to the key this tool uses:
+## Supported providers and models
 
-<p align="center"><img src="docs/usage.png" width="780"></p>
+The translating is done by a large language model. All of these providers are in the tray menu; click one, paste its key, and it works:
 
-875,393 input tokens, 160,926 output tokens, roughly 440 translations, almost all on Fable 5.1. The orange and green slivers are the automatic switch to another model after a refusal. How I use it: small regions only (a dialog, a chat message, a few lines of docs), `effort = low`, about 2,000 tokens sent per call (mostly the screenshot) and 400 back. At list prices, including the few days on a second key after a key rotation, the month came to about $18.
+| Provider | Models |
+|---|---|
+| Claude (default) | Fable 5.2, Fable 5.1, Opus 5.5, Sonnet 5.5 (default for new installs), Haiku 5.5 |
+| ChatGPT | gpt-6.2-sol and others |
+| DeepSeek | deepseek-flash, deepseek-v4-pro and others |
+| Qwen | qwen4-max and others |
+| Kimi | kimi-k3.1-pro and others |
+| GLM | glm-5.3-flash and others |
+| Tencent Hunyuan | hy4, hy4-flash and others |
+| Gemini | the Gemini 4 family and others |
+| Grok | whatever your account can use |
+| Ollama | the local models installed on your own machine; no key needed |
+| Custom endpoint | any other endpoint that speaks the OpenAI format; just give its address |
 
-The same tokens at list prices:
+- **The model list is looked up, not built in.** Claude has a fixed list of five. For every other provider the program asks the provider itself which models your account can use, once its key is saved (a free request), and the menu lists what comes back; the names in the table are only examples from November 2026. So when a provider brings out a new model, you can pick it without waiting for this program to be updated. A model that is not in the list can be typed in by name.
+- **Both features work with every provider.** Screen translation and converting what you typed do not depend on which one you use.
+- **Reading the screenshot.** Claude's models all read the screenshot directly. With the other providers it depends on the model: one that takes images gets the image; one that does not is noticed, and gets only the recognised text. With text only, Japanese and Korean won't translate, because that text comes from the Windows OCR engines for English and Chinese.
+- **Thinking effort can be set for every provider**, each with its own choices. Switching to another model automatically after a safety filter refuses by mistake is something only Claude has.
+- **What has been tested.** I only have a Claude key, so Claude is the only provider tested against the real service. The others follow each company's API documentation as of November 2026 and were checked against a local stand-in. If one of them misbehaves for you, please open an issue.
 
-| Model | Per translation | This month |
-|---|---|---|
-| Claude Fable 5.1 (what I use) | about $0.04 | about $18 |
-| Claude Fable 5.2 | about $0.03 | about $14.4 |
-| Claude Opus 5.5 | about $0.015 | about $7.2 |
-| Claude Sonnet 5.5 (default for new installs) | about $0.008 | about $3.6 |
-| Claude Haiku 5.5 | about $0.0004 | about $0.18 |
-
-Sonnet is good enough. Full-screen captures, long articles and higher effort cost noticeably more. DeepSeek-style endpoints are another order of magnitude cheaper.
+How to pick a provider, enter its key, choose a model and set the effort is under [Provider, model and thinking effort](#provider-model-and-thinking-effort).
 
 ## Install
 
@@ -51,15 +56,7 @@ Two ways, pick one.
 
 Either way, the next step is the key. Right-click the tray icon, open **API provider**, click your provider and paste the key into the box that comes up. It is written to `config.ini` in the program folder and takes effect right away, no restart. Editing `config.ini` in Notepad works too: paste the key after `api_key =`.
 
-The default provider is Claude. ChatGPT, DeepSeek, Qwen, Kimi, GLM, Tencent Hunyuan, Gemini, Grok and a local Ollama are in the same menu, and **Custom endpoint** takes any other address that speaks the OpenAI format. More on this under [Provider, model and thinking effort](#provider-model-and-thinking-effort).
-
-`target_language` starts out as your Windows display language when that is Chinese, Japanese or Korean, and as English otherwise. Write any language there, English, 日本語, 한국어, or pick one from the tray menu; the source can be anything, including Chinese. English runs about twice as long as Chinese, so Chinese-to-English overlays come out in smaller type; popup mode doesn't have that problem.
-
-Models that can't take images still work: the tool notices and sends text only. But then Japanese and Korean won't translate, because that text comes from the Windows OCR engines for English and Chinese.
-
-The interface language follows Windows by default; the tray menu switches between English, Simplified Chinese, Traditional Chinese, Japanese and Korean. The explanations inside the config file come in Chinese and English and follow the interface language.
-
-Windows 10 / 11 only.
+The default provider is Claude; the others are in the same menu.
 
 ## Use
 
@@ -76,9 +73,11 @@ In popup mode the translation is plain text in a window, already on the clipboar
 
 <p align="center"><img src="docs/popup.png" width="480"></p>
 
-Right-click the tray icon for: display mode, target language, convert typed text to, interface language, API provider, model, thinking effort, open the config file, open the history, start with Windows, quit.
-
 If the selection is already in the target language, no API call is made.
+
+Everything else is in the tray icon's right-click menu: display mode, target language, convert typed text to, interface language, API provider, model, thinking effort, open the config file, open the history, start with Windows, quit. The Chinese and the English interface:
+
+<p align="center"><img src="docs/tray.png" width="620"></p>
 
 ## Convert what you typed
 
@@ -106,16 +105,6 @@ Keys are only ever sent to a place Windows confirms is a text box. The text of a
 The text travels through the clipboard (Ctrl + C / Ctrl + V), because that is the one way every program supports. Whatever was on your clipboard before (text, a picture, copied files) is put back afterwards, and something you copy yourself while a conversion is running is left as it is. If the clipboard holds something that could not be put back (something very large, or of a kind only its own program understands), nothing is converted and you are told why. One thing is outside the program's reach: with Windows clipboard history (Win + V) switched on, the text you converted shows up in that list, because it is the other program that copies it.
 
 Some programs do not tell Windows where their input boxes are. There it says "This is not a place you can type in" and does nothing. I have tested it in browsers (Edge and other Chromium-based windows) and in plain Windows text boxes; other programs may or may not work, and if one does not, please open an issue.
-
-It costs less than a screenshot translation because no image is sent: a little over 800 tokens go out (mostly the fixed instructions) and from a few dozen to a hundred-odd come back. At list prices:
-
-| Model | Per conversion |
-|---|---|
-| Claude Fable 5.1 (what I use) | about $0.01 to $0.02 |
-| Claude Fable 5.2 | about $0.01 |
-| Claude Opus 5.5 | about $0.005 |
-| Claude Sonnet 5.5 (default for new installs) | about $0.003 |
-| Claude Haiku 5.5 | under $0.0002 |
 
 ## Provider, model and thinking effort
 
@@ -156,17 +145,49 @@ Default sends nothing and leaves it to the model. Some providers have no off swi
 
 In each case the extra request (two at the very most) is only made the first time: the program remembers what that model accepts for as long as it is running, and starts there the next time.
 
-I only have a Claude key, so Claude is the only provider tested against the real service. The others follow each company's API documentation as of November 2026 and were checked against a local stand-in. If one of them misbehaves for you, please open an issue.
+## Languages
 
-## Japanese and other languages
+**Target language.** `target_language` starts out as your Windows display language when that is Chinese, Japanese or Korean, and as English otherwise. Write any language there, English, 日本語, 한국어, or pick one from the tray menu; the source can be anything, including Chinese. English runs about twice as long as Chinese, so Chinese-to-English overlays come out in smaller type; popup mode doesn't have that problem.
 
-Windows OCR has no Japanese pack by default and it doesn't matter: the screenshot goes to the model anyway and the model reads it. With the Japanese language pack installed the placement is more accurate; without it, placement is estimated with the Chinese engine. Same for Korean and Russian.
+**Interface language.** It follows Windows by default; the tray menu switches between English, Simplified Chinese, Traditional Chinese, Japanese and Korean. The explanations inside the config file come in Chinese and English and follow the interface language.
+
+**Japanese and other languages.** Windows OCR has no Japanese pack by default and it doesn't matter: the screenshot goes to the model anyway and the model reads it. With the Japanese language pack installed the placement is more accurate; without it, placement is estimated with the Chinese engine. Same for Korean and Russian.
 
 <p align="center"><img src="docs/japanese.png" width="640"></p>
 
 The other direction works too. This is English to Japanese with `target_language = 日本語`; the font switches to Yu Gothic on its own:
 
 <p align="center"><img src="docs/to_japanese.png" width="780"></p>
+
+## What it costs
+
+What it costs depends on the model. Here is my own usage for the last 30 days, from the Claude Console, filtered to the key this tool uses:
+
+<p align="center"><img src="docs/usage.png" width="780"></p>
+
+875,393 input tokens, 160,926 output tokens, roughly 440 translations, almost all on Fable 5.1. The orange and green slivers are the automatic switch to another model after a refusal. How I use it: small regions only (a dialog, a chat message, a few lines of docs), `effort = low`, about 2,000 tokens sent per call (mostly the screenshot) and 400 back. At list prices, including the few days on a second key after a key rotation, the month came to about $18.
+
+The same tokens at list prices:
+
+| Model | Per screen translation | This month |
+|---|---|---|
+| Claude Fable 5.1 (what I use) | about $0.04 | about $18 |
+| Claude Fable 5.2 | about $0.03 | about $14.4 |
+| Claude Opus 5.5 | about $0.015 | about $7.2 |
+| Claude Sonnet 5.5 (default for new installs) | about $0.008 | about $3.6 |
+| Claude Haiku 5.5 | about $0.0004 | about $0.18 |
+
+Sonnet is good enough. Full-screen captures, long articles and higher effort cost noticeably more. DeepSeek-style endpoints are another order of magnitude cheaper.
+
+Converting what you typed costs less than a screen translation because no image is sent: a little over 800 tokens go out (mostly the fixed instructions) and from a few dozen to a hundred-odd come back. At list prices:
+
+| Model | Per conversion |
+|---|---|
+| Claude Fable 5.1 (what I use) | about $0.01 to $0.02 |
+| Claude Fable 5.2 | about $0.01 |
+| Claude Opus 5.5 | about $0.005 |
+| Claude Sonnet 5.5 (default for new installs) | about $0.003 |
+| Claude Haiku 5.5 | under $0.0002 |
 
 ## Refusals
 
