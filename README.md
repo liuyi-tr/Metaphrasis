@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/icon.png" width="96"></p>
+
 # Metaphrasis
 
 Screen translation for Windows. Press a hotkey, drag a box around any text on the screen, and a few seconds later the translation is drawn over the original, in the same size, weight and alignment. The translating is done by a large language model through your own API key: Claude, or any service whose API follows the OpenAI format (ChatGPT, DeepSeek, Qwen, Kimi, Gemini, a local Ollama).
@@ -205,6 +207,7 @@ ocr_win.py      Windows OCR
 inputbox.py     converting what you typed: finds the input box, takes the text, puts the result back
 settings.py     config, history
 i18n.py         interface strings in five languages
+appicon.py      the icon, drawn in code (there is no picture file)
 tools/          script that builds the portable zip
 other .py       small helpers
 ```

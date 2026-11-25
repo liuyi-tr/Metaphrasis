@@ -49,9 +49,8 @@ def t(text, **kw):
 
 STRINGS = {
     # ---------- app name, tray ----------
-    "截图翻译": {"zh-tw": "截圖翻譯", "en": "Screen Translation", "ja": "画面翻訳", "ko": "화면 번역"},
-    "截图翻译    {hotkey}": {"zh-tw": "截圖翻譯    {hotkey}", "en": "Translate selection    {hotkey}", "ja": "範囲を選んで翻訳    {hotkey}", "ko": "영역 선택 번역    {hotkey}"},
-    "截图翻译（{hotkey}）": {"zh-tw": "截圖翻譯（{hotkey}）", "en": "Screen Translation ({hotkey})", "ja": "画面翻訳（{hotkey}）", "ko": "화면 번역({hotkey})"},
+    "截图翻译    {hotkey}":{"zh-tw": "截圖翻譯    {hotkey}", "en": "Translate selection    {hotkey}", "ja": "範囲を選んで翻訳    {hotkey}", "ko": "영역 선택 번역    {hotkey}"},
+    "Metaphrasis · 截图翻译 {hotkey}": {"zh-tw": "Metaphrasis · 截圖翻譯 {hotkey}", "en": "Metaphrasis · Translate selection {hotkey}", "ja": "Metaphrasis · 範囲を選んで翻訳 {hotkey}", "ko": "Metaphrasis · 영역 선택 번역 {hotkey}"},
     "已在后台运行。按 {capture} 框选翻译，{toggle} 切换显示模式。": {
         "zh-tw": "已在背景執行。按 {capture} 框選翻譯，{toggle} 切換顯示模式。",
         "en": "Running in the background. Press {capture} to select and translate, {toggle} to switch display mode.",
@@ -169,8 +168,8 @@ STRINGS = {
     "翻译结果": {"zh-tw": "翻譯結果", "en": "Translation", "ja": "翻訳結果", "ko": "번역 결과"},
     "没有识别到文字位置，改用弹窗显示": {"zh-tw": "沒有辨識到文字位置，改用彈窗顯示", "en": "No text positions detected, showing as popup", "ja": "文字の位置を検出できなかったため、ポップアップで表示します", "ko": "텍스트 위치를 인식하지 못해 팝업으로 표시합니다"},
     # ---------- errors, status ----------
-    "截图翻译 · 需要设置 API Key": {"zh-tw": "截圖翻譯 · 需要設定 API Key", "en": "Screen Translation · API key needed", "ja": "画面翻訳 · API キーの設定が必要です", "ko": "화면 번역 · API 키 설정 필요"},
-    "截图翻译 · 出错了": {"zh-tw": "截圖翻譯 · 出錯了", "en": "Screen Translation · Error", "ja": "画面翻訳 · エラー", "ko": "화면 번역 · 오류"},
+    "Metaphrasis · 需要设置 API Key": {"zh-tw": "Metaphrasis · 需要設定 API Key", "en": "Metaphrasis · API key needed", "ja": "Metaphrasis · API キーの設定が必要です", "ko": "Metaphrasis · API 키 설정 필요"},
+    "Metaphrasis · 出错了": {"zh-tw": "Metaphrasis · 出錯了", "en": "Metaphrasis · Error", "ja": "Metaphrasis · エラー", "ko": "Metaphrasis · 오류"},
     "config.ini 里的快捷键 “{t}” 无法识别：{err}\n已暂时改用默认的 {d}。": {
         "zh-tw": "config.ini 裡的快捷鍵 “{t}” 無法辨識：{err}\n已暫時改用預設的 {d}。",
         "en": "The hotkey “{t}” in config.ini could not be parsed: {err}\nUsing the default {d} for now.",
@@ -188,11 +187,11 @@ STRINGS = {
     "翻译时出错：{e}\n（详细信息见 运行日志.txt）": {"zh-tw": "翻譯時出錯：{e}\n（詳細資訊見 运行日志.txt）", "en": "Translation failed: {e}\n(details in 运行日志.txt)", "ja": "翻訳中にエラーが発生しました：{e}\n（詳細は 运行日志.txt を参照）", "ko": "번역 중 오류가 발생했습니다: {e}\n(자세한 내용은 运行日志.txt 참조)"},
     "复制图片失败：{e}": {"zh-tw": "複製圖片失敗：{e}", "en": "Could not copy the image: {e}", "ja": "画像をコピーできませんでした：{e}", "ko": "이미지를 복사하지 못했습니다: {e}"},
     "打不开 {path}：{e}": {"zh-tw": "打不開 {path}：{e}", "en": "Could not open {path}: {e}", "ja": "{path} を開けません：{e}", "ko": "{path}을(를) 열 수 없습니다: {e}"},
-    "截图翻译已经在运行了。\n\n托盘图标在任务栏右下角（可能收在 ^ 里面）。": {
-        "zh-tw": "截圖翻譯已經在執行了。\n\n系統匣圖示在工作列右下角（可能收在 ^ 裡面）。",
-        "en": "Screen Translation is already running.\n\nThe tray icon is at the bottom right of the taskbar (it may be hidden under ^).",
-        "ja": "画面翻訳はすでに実行中です。\n\nトレイアイコンはタスクバーの右下にあります（^ の中に隠れていることがあります）。",
-        "ko": "화면 번역이 이미 실행 중입니다.\n\n트레이 아이콘은 작업 표시줄 오른쪽 아래에 있습니다(^ 안에 숨어 있을 수 있습니다)."},
+    "Metaphrasis 已经在运行了。\n\n托盘图标在任务栏右下角（可能收在 ^ 里面）。": {
+        "zh-tw": "Metaphrasis 已經在執行了。\n\n系統匣圖示在工作列右下角（可能收在 ^ 裡面）。",
+        "en": "Metaphrasis is already running.\n\nThe tray icon is at the bottom right of the taskbar (it may be hidden under ^).",
+        "ja": "Metaphrasis はすでに実行中です。\n\nトレイアイコンはタスクバーの右下にあります（^ の中に隠れていることがあります）。",
+        "ko": "Metaphrasis가 이미 실행 중입니다.\n\n트레이 아이콘은 작업 표시줄 오른쪽 아래에 있습니다(^ 안에 숨어 있을 수 있습니다)."},
     "启动失败：{e}\n\n详细信息见 运行日志.txt": {"zh-tw": "啟動失敗：{e}\n\n詳細資訊見 运行日志.txt", "en": "Failed to start: {e}\n\nDetails in 运行日志.txt", "ja": "起動に失敗しました：{e}\n\n詳細は 运行日志.txt を参照", "ko": "시작하지 못했습니다: {e}\n\n자세한 내용은 运行日志.txt 참조"},
     # ---------- API errors (translator.py) ----------
     "API Key 无效或没有权限（{status}），请检查 config.ini 里的 api_key。\n{short}": {

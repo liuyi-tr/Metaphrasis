@@ -7,7 +7,8 @@ from pathlib import Path
 from settings import APP_DIR, ICON_PATH
 
 STARTUP_DIR = Path(os.environ.get("APPDATA", "")) / r"Microsoft\Windows\Start Menu\Programs\Startup"
-LINK_PATH = STARTUP_DIR / "截图翻译.lnk"
+LINK_PATH = STARTUP_DIR / "Metaphrasis.lnk"
+OLD_LINK_PATH = STARTUP_DIR / "截图翻译.lnk"  # the shortcut's name before the program was called Metaphrasis
 CREATE_NO_WINDOW = 0x08000000
 
 _PS_SCRIPT = (
@@ -22,7 +23,19 @@ _PS_SCRIPT = (
 
 
 def is_enabled():
-    return LINK_PATH.exists()
+    return LINK_PATH.exists() or OLD_LINK_PATH.exists()
+
+
+def adopt_old_link():
+    """A shortcut made under the earlier name is given the new one (renamed, so the program is not started twice).
+    True when there was one to take over."""
+    if not OLD_LINK_PATH.exists():
+        return False
+    if LINK_PATH.exists():
+        OLD_LINK_PATH.unlink()
+    else:
+        OLD_LINK_PATH.rename(LINK_PATH)
+    return True
 
 
 def enable():
@@ -30,7 +43,7 @@ def enable():
     env = dict(os.environ,
                FANYI_LNK=str(LINK_PATH), FANYI_TARGET=str(pythonw),
                FANYI_SCRIPT=str(APP_DIR / "guard.pyw"), FANYI_DIR=str(APP_DIR),  # launched through the watchdog so it comes back if killed
-               FANYI_ICON=str(ICON_PATH), FANYI_DESC="截图翻译")
+               FANYI_ICON=str(ICON_PATH), FANYI_DESC="Metaphrasis")
     STARTUP_DIR.mkdir(parents=True, exist_ok=True)
     subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
                     "-Command", _PS_SCRIPT],
@@ -40,3 +53,4 @@ def enable():
 
 def disable():
     LINK_PATH.unlink(missing_ok=True)
+    OLD_LINK_PATH.unlink(missing_ok=True)

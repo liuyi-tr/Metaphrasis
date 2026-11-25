@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/icon.png" width="96"></p>
+
 # Metaphrasis
 
 [English](README.md)
@@ -205,6 +207,7 @@ ocr_win.py      Windows OCR
 inputbox.py     输入框转换：认输入框、取字、放回去
 settings.py     配置、记录
 i18n.py         界面文字的五种语言
+appicon.py      图标，是用代码画出来的，没有图片文件
 tools/          打包便携版的脚本
 其它 .py        小工具
 ```

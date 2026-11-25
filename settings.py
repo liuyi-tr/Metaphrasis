@@ -13,6 +13,7 @@ import i18n
 import redact
 from i18n import t
 
+APP_NAME = "Metaphrasis"  # what the program calls itself: the same in every interface language
 VERSION = "1.1.0"  # shown in the tray menu; tools/build_portable.py names the zip after it
 APP_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = APP_DIR / "config.ini"
@@ -85,7 +86,7 @@ EFFORTS = ("low", "medium", "high", "xhigh", "max")
 MODES = {"overlay": "overlay", "覆盖": "overlay", "popup": "popup", "弹窗": "popup"}
 
 DEFAULT_CONFIG = """\
-; ================== 截图翻译 配置文件 ==================
+; ================== Metaphrasis 配置文件 ==================
 ; 改完保存即可，下一次截图翻译时自动生效。
 ; （只有 [hotkey] 里的快捷键改了以后需要重启本工具）
 
@@ -279,6 +280,9 @@ assert [k for k, _ in OPTION_BLOCKS] == [k for k, _ in OPTION_BLOCKS_EN]
 
 # Chinese comments written by older versions (different from the current template): recognized when switching to English
 _LEGACY_ZH_BLOCKS = {
+    "__top__": [["; ================== 截图翻译 配置文件 ==================",  # the heading before the program was called Metaphrasis
+                 "; 改完保存即可，下一次截图翻译时自动生效。",
+                 "; （只有 [hotkey] 里的快捷键改了以后需要重启本工具）"]],
     "model": [["; 模型名。provider = claude 时可选：",
                ";   claude-sonnet-5-5（默认，均衡）  claude-haiku-5-5（最快最便宜）  claude-opus-5-5（更好）  claude-fable-5-1（最强最贵）",
                "; provider = openai 时填该平台的模型名，例如 gpt-4o、deepseek-chat、qwen-vl-max、moonshot-v1-8k、glm-4v"]],
@@ -400,7 +404,7 @@ def localize_config_comments(lang):
     k = 0  # banner at the top of the file
     while k < len(parts) and is_comment(parts[k]):
         k += 1
-    if k and [x.rstrip() for x in parts[:k]] == src["__top__"] and dst.get("__top__"):
+    if k and [x.rstrip() for x in parts[:k]] in [src["__top__"]] + legacy.get("__top__", []) and dst.get("__top__"):
         e = ends[0] or nl
         parts[:k] = list(dst["__top__"]); ends[:k] = [e] * len(dst["__top__"])
         changed += 1

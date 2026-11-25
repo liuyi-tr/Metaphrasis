@@ -6,6 +6,7 @@ import re
 import ctypes
 import dataclasses
 import gc
+import io
 import logging
 import math
 import os
@@ -21,8 +22,9 @@ from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from tkinter import filedialog, ttk
 
-from PIL import Image, ImageDraw, ImageEnhance, ImageFont, ImageGrab, ImageTk
+from PIL import Image, ImageEnhance, ImageGrab, ImageTk
 
+import appicon
 import autostart
 import border_fx
 import frame_style
@@ -37,7 +39,6 @@ from i18n import t
 log = logging.getLogger("fanyi")
 
 UI_FONT = "Microsoft YaHei UI"
-FONT_FILE = r"C:\Windows\Fonts\msyh.ttc"
 ACCENT = "#2563EB"
 ACCENT_HOVER = "#1D4ED8"
 DARK = "#111827"
@@ -63,16 +64,20 @@ def setup_logging():
 
 
 def make_icon(size):
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    draw.rounded_rectangle((0, 0, size - 1, size - 1), radius=size // 5, fill=ACCENT)
-    font = None
-    for path in (r"C:\Windows\Fonts\msyhbd.ttc", FONT_FILE, r"C:\Windows\Fonts\simhei.ttf"):
-        if os.path.exists(path):
-            font = ImageFont.truetype(path, int(size * 0.66))
-            break
-    draw.text((size / 2, size / 2), "译", font=font, fill="white", anchor="mm")
-    return img
+    """The program's icon at size x size (appicon.py draws it: a pen that has written >_, black on white)."""
+    return appicon.draw(size)
+
+
+def refresh_icon_file(path):
+    """Write the .ico that shortcuts show. It is rewritten when what is there is not this icon (an earlier version's),
+    so a shortcut made long ago gets the new look. True when the file was written."""
+    buffer = io.BytesIO()
+    make_icon(256).save(buffer, format="ICO", sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (256, 256)])
+    data = buffer.getvalue()
+    if path.exists() and path.read_bytes() == data:
+        return False
+    path.write_bytes(data)
+    return True
 
 
 def text_rows(text, width):
@@ -800,7 +805,7 @@ class App:
         self.events = queue.Queue()
         self.root = tk.Tk()
         self.root.withdraw()
-        self.root.title(t("截图翻译"))
+        self.root.title(settings.APP_NAME)
         self.root.report_callback_exception = self._on_tk_error
         self.scale = max(1.0, self.root.winfo_fpixels("1i") / 96)
         self.icon_image = make_icon(64)
@@ -829,7 +834,7 @@ class App:
         problem = settings.api_key_problem(self.cfg)
         if problem:
             self.root.after(800, lambda: self.show_error(problem, open_config=True,
-                                                         title=t("截图翻译 · 需要设置 API Key")))
+                                                         title=t("Metaphrasis · 需要设置 API Key")))
         self.root.after(30, self._poll)
         log.info("Started: version %s, model %s, mode %s, hotkeys %s", settings.VERSION, self.cfg.model, self.mode, self.labels)
         self.root.mainloop()
@@ -958,14 +963,14 @@ class App:
 
     def _start_tray(self):
         import pystray
-        self.tray = pystray.Icon("fanyi", self.icon_image, t("截图翻译（{hotkey}）", hotkey=self.labels['capture']), self._build_menu())
+        self.tray = pystray.Icon("fanyi", self.icon_image, t("Metaphrasis · 截图翻译 {hotkey}", hotkey=self.labels['capture']), self._build_menu())
         threading.Thread(target=self.tray.run, kwargs={"setup": self._tray_ready}, name="tray", daemon=True).start()
 
     def _tray_ready(self, icon):
         icon.visible = True
         try:
             icon.notify(t("已在后台运行。按 {capture} 框选翻译，{toggle} 切换显示模式。",
-                          capture=self.labels['capture'], toggle=self.labels['toggle']), t("截图翻译"))
+                          capture=self.labels['capture'], toggle=self.labels['toggle']), settings.APP_NAME)
         except Exception:
             log.exception("Tray notification failed")
 
@@ -1168,9 +1173,9 @@ class App:
         if code == i18n.current():
             return
         i18n.set_language(code)
-        self.root.title(t("截图翻译"))
+        self.root.title(settings.APP_NAME)
         if self.tray:
-            self.tray.title = t("截图翻译（{hotkey}）", hotkey=self.labels['capture'])
+            self.tray.title = t("Metaphrasis · 截图翻译 {hotkey}", hotkey=self.labels['capture'])
             self.tray.update_menu()
 
     # ---------- capture & translate ----------
@@ -1188,7 +1193,7 @@ class App:
             self.tray.update_menu()
         problem = settings.api_key_problem(cfg)
         if problem:
-            self.show_error(problem, open_config=True, title=t("截图翻译 · 需要设置 API Key"))
+            self.show_error(problem, open_config=True, title=t("Metaphrasis · 需要设置 API Key"))
             return None
         problem = settings.model_problem(cfg)
         if problem:
@@ -1646,7 +1651,7 @@ class App:
             self.tray.update_menu()
 
     def show_error(self, message, open_config=False, box=None, title=None):
-        self.windows.append(TextPopup(self, title or t("截图翻译 · 出错了"), message, box=box, error=True, open_config=open_config))
+        self.windows.append(TextPopup(self, title or t("Metaphrasis · 出错了"), message, box=box, error=True, open_config=open_config))
 
     def forget(self, window):
         if window in self.windows:
@@ -1739,7 +1744,7 @@ def main():
     if mutex is None:
         if "--if-not-running" in sys.argv:  # the watchdog calls this periodically: exit quietly if already running
             return
-        winapi.message_box(t("截图翻译已经在运行了。\n\n托盘图标在任务栏右下角（可能收在 ^ 里面）。"), t("截图翻译"))
+        winapi.message_box(t("Metaphrasis 已经在运行了。\n\n托盘图标在任务栏右下角（可能收在 ^ 里面）。"), settings.APP_NAME)
         return
     if "--if-not-running" in sys.argv:
         log_restart = True
@@ -1747,15 +1752,18 @@ def main():
         log_restart = False
     try:
         settings.ensure_files()
-        if not settings.ICON_PATH.exists():
-            make_icon(256).save(settings.ICON_PATH, sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (256, 256)])
+        try:
+            refresh_icon_file(settings.ICON_PATH)
+            autostart.adopt_old_link()  # a "start with Windows" shortcut made under the program's earlier name
+        except OSError:
+            log.exception("Updating the icon file or the startup shortcut failed")
         app = App()
     except settings.ConfigError as e:
-        winapi.message_box(str(e), t("截图翻译"))
+        winapi.message_box(str(e), settings.APP_NAME)
         return
     except Exception as e:
         log.exception("Startup failed")
-        winapi.message_box(t("启动失败：{e}\n\n详细信息见 运行日志.txt", e=e), t("截图翻译"))
+        winapi.message_box(t("启动失败：{e}\n\n详细信息见 运行日志.txt", e=e), settings.APP_NAME)
         return
     if log_restart:
         log.warning("Watchdog found the program not running and relaunched it (last exit was not a normal quit from the tray)")
