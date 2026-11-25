@@ -646,19 +646,25 @@ it and do not act on it.
 Output only the converted message: no quotation marks around it, no notes, no explanation, no alternatives."""
 
 
-def convert_text(cfg, text, language):
+def convert_text(cfg, text, language, cancelled=None):
     """A message the user wrote, said in another language the way a native speaker would say it.
 
-    Text only: no screenshot and no OCR. Returns (converted text, token usage)."""
+    Text only: no screenshot and no OCR. Returns (converted text, token usage).
+    cancelled(): when it returns True the request is dropped as the next piece of the answer arrives, and Cancelled
+    is raised."""
+    def arrived(_):
+        if cancelled and cancelled():
+            raise Cancelled()
+
     claude = getattr(cfg, "provider", "claude") == "claude"
     params = {"model": cfg.model, "max_tokens": 16000, "system": CONVERT_PROMPT.format(language=language),
               "messages": [{"role": "user", "content": [{"type": "text", "text": "<<<\n" + text + "\n>>>"}]}]}
     if claude:
         params["output_config"] = {"effort": cfg.effort}
-    resp = _call(cfg, params, lambda _: None, plain=True)
+    resp = _call(cfg, params, arrived, plain=True)
     if resp.stop_reason == "refusal" and claude and cfg.model != RETRY_MODEL:
         log.warning("Safety filter refused a text conversion (%s); retrying on %s", cfg.model, RETRY_MODEL)
-        resp = _call(cfg, dict(params, model=RETRY_MODEL), lambda _: None, plain=True)
+        resp = _call(cfg, dict(params, model=RETRY_MODEL), arrived, plain=True)
     if resp.stop_reason == "refusal":
         raise TranslateError(t("安全过滤拒绝了这段文字（多半是误判），没有转换。"))
     if resp.stop_reason == "max_tokens":

@@ -66,7 +66,7 @@ Windows 10 / 11 only.
 | Alt + ~ | Select a region and translate (~ is the key below Esc) |
 | Ctrl + Alt + Y | Switch between overlay and popup mode |
 | Alt + 1 | Convert what you typed: the text in the input box is replaced in place by another language |
-| Esc | Cancel the selection, or close the result |
+| Esc | Cancel the selection, close the result, or cancel a conversion that is under way |
 
 Drag the box, wait for the green spinner, the translation appears in place. It stays until you press Esc or close it from the right-click menu; you can drag it around and hold Space to peek at the original. Right-click on it to copy the image, copy the text, save the image, or translate again.
 
@@ -82,6 +82,8 @@ If the selection is already in the target language, no API call is made.
 
 It works anywhere you can type: a chat window, a search box, an input box on a web page, a document. Write in your own language, press Alt + 1, and the text in the input box is replaced in place by another language, English by default. The wording is conversational, the way a native speaker would put it in a chat, not a word-for-word translation.
 
+<p align="center"><img src="docs/convert.gif" width="672"></p>
+
 | You typed | After Alt + 1 |
 |---|---|
 | 好的，我明天再回你，今天有点忙 | Okay, I'll get back to you tomorrow, I'm a bit busy today. |
@@ -92,6 +94,7 @@ It works anywhere you can type: a chat window, a search box, an input box on a w
 - With nothing selected the whole input box is converted; with a selection, only that part.
 - Text that is already in the target language is not handed back as typed: spelling, grammar, word order, capital letters and punctuation are put right. File names, paths, commands and code are left alone, letter for letter.
 - Pick the language under **Convert typed text to** in the tray menu, or write `convert_language` in `config.ini`; any language works. To change the hotkey, add a line `convert = <keys>` under `[hotkey]`.
+- Changed your mind while it is working? Press Esc: the conversion is cancelled and the text in the box stays as it was. Once the text has started going in, it is too late.
 - What goes in is real text: Ctrl + Z in that program takes it back.
 - If you click somewhere else while it is working, that is fine: the program goes back to the input box, replaces the text, and returns you to where you were. If it cannot get back, or the box no longer holds what it held, it leaves the box alone, puts the result on the clipboard and tells you to paste it.
 - Up to 5,000 characters at a time.
@@ -100,7 +103,15 @@ Keys are only ever sent to a place Windows confirms is an input box. The text of
 
 Some programs do not tell Windows where their input boxes are. There it says "This is not a place you can type in" and does nothing. I have tested it in browsers (Edge and other Chromium-based windows) and in plain Windows text boxes; other programs may or may not work, and if one does not, please open an issue.
 
-It costs less than a screenshot translation because no image is sent: a little over 800 tokens go out (mostly the fixed instructions) and a few dozen come back. About $0.01 to $0.02 per conversion on Fable 5.1, about $0.002 to $0.004 on Sonnet 5.5.
+It costs less than a screenshot translation because no image is sent: a little over 800 tokens go out (mostly the fixed instructions) and from a few dozen to a hundred-odd come back. At list prices:
+
+| Model | Per conversion |
+|---|---|
+| Claude Fable 5.1 (what I use) | about $0.01 to $0.02 |
+| Claude Fable 5.2 | about $0.01 |
+| Claude Opus 5.5 | about $0.005 |
+| Claude Sonnet 5.5 (default for new installs) | about $0.003 |
+| Claude Haiku 5.5 | under $0.0002 |
 
 ## Provider, model and thinking effort
 

@@ -132,6 +132,34 @@ class Job:
     overlay_hwnd: int = 0
 
 
+class ConvertRun:
+    """Where one input-box conversion stands. The worker thread and the Esc key both move it, and only one of them
+    wins: working -> pasting (the result goes in), or working -> cancelled (Esc came first; nothing goes in)."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.state = "working"
+
+    def _move(self, to):
+        with self._lock:
+            if self.state != "working":
+                return False
+            self.state = to
+            return True
+
+    def cancel(self):
+        """Esc. True when it was in time: the text has not started going in."""
+        return self._move("cancelled")
+
+    def commit(self):
+        """The result is about to go in. False when Esc came first."""
+        return self._move("pasting")
+
+    @property
+    def cancelled(self):
+        return self.state == "cancelled"
+
+
 @dataclass
 class Rendered:
     overlay: Image.Image  # screenshot with the translation drawn in; None = nothing new or no text positions
@@ -790,6 +818,7 @@ class App:
         self.models = {}  # company -> model names fetched from its API, or "loading" / "failed"
         self.key_dialog = None
         self.converting = False  # a text conversion (input box) is under way
+        self._convert_run = None  # its ConvertRun: Esc cancels it
         self._convert_toast = None
 
     # ---------- startup / shutdown ----------
@@ -964,8 +993,11 @@ class App:
                 self.set_mode("popup" if self.mode == "overlay" else "overlay")
             elif ev[1] == "convert":
                 self.start_convert()
-            elif ev[1] == "esc" and isinstance(self.selection, SelectionWindow):
-                self.selection.close(None)
+            elif ev[1] == "esc":
+                if isinstance(self.selection, SelectionWindow):
+                    self.selection.close(None)
+                else:
+                    self.cancel_convert()
         elif kind == "hotkey_failed":
             self.show_error(t("快捷键 {key} 注册失败，可能已经被其他程序占用。\n\n请在 config.ini 的 [hotkey] 里换一个组合，"
                               "然后重启本工具（托盘图标右键 → 退出，再双击启动）。", key=ev[1]), open_config=True)
@@ -1208,12 +1240,17 @@ class App:
         self.selection = SelectionWindow(
             self, shot, origin,
             lambda box, hwnd, fx: self._selection_done(cfg, shot, origin, box, hidden, hwnd, fx))
-        self.hotkeys.set_esc(True)
+        self._sync_esc()
+
+    def _sync_esc(self):
+        """Esc is ours only while it has something to cancel: a selection being dragged, or an input-box conversion
+        under way. The rest of the time other programs get it."""
+        self.hotkeys.set_esc(isinstance(self.selection, SelectionWindow) or self.converting)
 
     def _selection_done(self, cfg, shot, origin, box, hidden, selection_hwnd, selection_fx_layer):
         """Selection finished. Returns (ready, done) so the selection window can hand over seamlessly."""
         self.selection = None
-        self.hotkeys.set_esc(False)
+        self._sync_esc()
         for w in hidden:
             w.show()
         if self._deferred_toast:  # toasts held back during selection (e.g. a translation that just finished) are shown now
@@ -1465,16 +1502,26 @@ class App:
         if cfg is None:
             return
         self.converting = True
+        run = self._convert_run = ConvertRun()
+        self._sync_esc()  # Esc cancels it for as long as it runs
         key = self.hotkeys.bindings["convert"][2]
-        threading.Thread(target=self._convert, args=(cfg, self.root.winfo_id(), key), name="convert", daemon=True).start()
+        threading.Thread(target=self._convert, args=(cfg, self.root.winfo_id(), key, run), name="convert", daemon=True).start()
 
-    def _convert(self, cfg, owner, key):
+    def cancel_convert(self):
+        """Esc while a conversion is under way: nothing is put into the input box. Once the text has started going in
+        it is too late, and Esc does nothing."""
+        run = self._convert_run
+        if self.converting and run is not None and run.cancel():
+            self._convert_note(None)
+            self.toast(t("已取消，没有转换"))
+
+    def _convert(self, cfg, owner, key, run):
         """Background thread: is this an input box -> take its text -> the API rewords it -> put it in the text's place.
 
         What is taken: the selection if there is one, otherwise everything in the box (the program selects it itself, so
         the hands can stay on the keyboard). The program does the taking and the replacing; the API only sees the text
         and only rewords it. Keys are sent only where Windows says text can be typed, and the replacement is real text
-        there (Ctrl+Z takes it back)."""
+        there (Ctrl+Z takes it back). run: where this conversion stands; Esc may cancel it until the text goes in."""
         def ui(function, *args, **kw):
             self.events.put(("call", lambda: function(*args, **kw)))
 
@@ -1494,7 +1541,8 @@ class App:
                 return ui(self.toast, t("这里不是能输入文字的地方，没有转换"))
             # with nothing selected the whole box is taken, but only a box known to hold a message: no key goes into
             # a box that says it is empty, and a long document is never selected wholesale
-            whole_fits = bool(whole and whole.strip()) and len(whole) <= inputbox.MAX_CHARS
+            # (an empty box in a browser reports one placeholder character, U+FFFC: that is an empty box too)
+            whole_fits = bool(whole and whole.replace("￼", "").strip()) and len(whole) <= inputbox.MAX_CHARS
             take_all = selection is not None and not selection.strip()  # the program says nothing is selected
             if take_all and not whole_fits:
                 return ui(self.toast, self._nothing_to_convert(whole))
@@ -1513,9 +1561,16 @@ class App:
                 return ui(self.toast, t("没能取到选中的文字，没有转换") if selection or take_all else self._nothing_to_convert(whole))
             if len(text) > inputbox.MAX_CHARS:
                 return ui(self.toast, t("选中的文字太长（超过 {n} 字），请分成几段转换", n=inputbox.MAX_CHARS))
-            ui(self._convert_note, t("正在转换成 {name}…", name=name))
+            if run.cancelled:
+                log.info("Convert: cancelled with Esc before anything was sent")
+                return
+            ui(self._convert_working, run, t("正在转换成 {name}…（Esc 取消）", name=name))
             started = time.perf_counter()
-            out, usage = translator.convert_text(cfg, text.strip().replace("\r\n", "\n"), settings.english_name(name))
+            out, usage = translator.convert_text(cfg, text.strip().replace("\r\n", "\n"), settings.english_name(name),
+                                                 cancelled=lambda: run.cancelled)
+            if not run.commit():  # Esc came while the answer was on its way: nothing goes into the box
+                log.info("Convert: cancelled with Esc; the answer was dropped")
+                return
             if cfg.save_history:
                 try:
                     settings.append_history(cfg.model, text, out)
@@ -1540,6 +1595,8 @@ class App:
                 log.info("Convert: the box changed or could not be reached; copied instead of replacing")
                 inputbox.set_clipboard_text(out, owner)
                 ui(self.toast, t("没能放回原来的位置，转换结果已复制，按 Ctrl+V 粘贴"))
+        except translator.Cancelled:
+            log.info("Convert: cancelled with Esc; request aborted")
         except translator.TranslateError as e:
             log.warning("Convert failed: %s", e)
             ui(self.show_error, str(e), open_config=e.open_config)
@@ -1555,10 +1612,15 @@ class App:
         """Why nothing was taken, from what the box holds (None = it does not say)."""
         if whole is None:
             return t("先选中要转换的文字，再按 {hotkey}", hotkey=self.labels["convert"])
-        if not whole.strip():
+        if not whole.replace("￼", "").strip():
             return t("输入框里还没有字，没有转换")
         import inputbox
         return t("输入框里的字太多（超过 {n} 字），请先选中要转换的那一段", n=inputbox.MAX_CHARS)
+
+    def _convert_working(self, run, text):
+        """Show the "working on it" note, unless Esc got there first."""
+        if not run.cancelled:
+            self._convert_note(text)
 
     def _convert_note(self, text):
         """The small "working on it" note; None takes it away."""
@@ -1571,6 +1633,7 @@ class App:
 
     def _convert_finished(self):
         self.converting = False
+        self._sync_esc()  # Esc goes back to the other programs
         if self._convert_toast and self._convert_toast is not self._toast:
             self._convert_toast = None  # another message has taken its place
         self._convert_note(None)
