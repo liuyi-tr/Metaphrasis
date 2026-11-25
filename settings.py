@@ -13,7 +13,7 @@ import i18n
 import redact
 from i18n import t
 
-VERSION = "1.0.3"  # shown in the tray menu; tools/build_portable.py names the zip after it
+VERSION = "1.1.0"  # shown in the tray menu; tools/build_portable.py names the zip after it
 APP_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = APP_DIR / "config.ini"
 HISTORY_PATH = APP_DIR / "翻译记录.txt"
@@ -127,6 +127,8 @@ proxy =
 capture = Alt+~
 ; 切换显示模式：覆盖在原文上 <-> 弹窗显示文字（并复制到剪贴板）
 toggle_mode = Ctrl+Alt+Y
+; 输入框转换：在能打字的地方打完字按这个键，输入框里的字就地换成另一种语言（选中了一段就只换那一段）
+convert = Alt+1
 
 [display]
 ; 启动时的默认显示模式：
@@ -148,6 +150,11 @@ target_language = 中文
 ; 界面语言：auto = 跟随 Windows 的显示语言（不支持的语言用英文）。也可以写 简体中文 / 繁體中文 / English / 日本語 / 한국어
 ; 托盘菜单里也能切换。切换后这个文件里的注释也会跟着换成中文或英文
 ui_language = auto
+"""),
+    ("convert_language", """\
+; 输入框转换成哪种语言：在能打字的地方打完字按快捷键（默认 Alt+1），输入框里的字就地换成这种语言，说法口语化；选中了一段就只换那一段
+; 托盘菜单里也能选。快捷键想换一个，就在上面 [hotkey] 里写一行 convert = 组合键，然后重启
+convert_language = English
 """),
     ("skip_chinese", """\
 ; 框选的内容本来就是译文语言时（例如目标是中文，框到的也是中文），不调用 API（省钱）。如果判断错了，改成 false
@@ -217,6 +224,8 @@ proxy =
 capture = Alt+~
 ; Switch display mode: overlay on the original <-> popup text (also copied to the clipboard)
 toggle_mode = Ctrl+Alt+Y
+; Convert in place: press this key after typing in an input box and what you typed is replaced by the other language (with a selection, only that part)
+convert = Alt+1
 
 [display]
 ; Default display mode at startup:
@@ -237,6 +246,11 @@ target_language = English
 ; Interface language: auto = follow the Windows display language (English for unsupported languages). Or write 简体中文 / 繁體中文 / English / 日本語 / 한국어
 ; You can also switch it from the tray menu. The comments in this file switch between Chinese and English with it
 ui_language = auto
+"""),
+    ("convert_language", """\
+; Convert in place: press the hotkey (Alt+1 by default) after typing in an input box and what you typed is replaced by this language, worded the way people talk; with a selection, only that part
+; You can also pick it from the tray menu. To change the hotkey, add a line convert = <keys> under [hotkey] above and restart
+convert_language = English
 """),
     ("skip_chinese", """\
 ; When the selection is already in the target language (e.g. target Chinese and the selection is Chinese), skip the API call (saves money). Set false if it misjudges
@@ -435,6 +449,14 @@ def lang_code(name):
     return "other"
 
 
+_ENGLISH_NAMES = {"zh": "Simplified Chinese", "zh-tw": "Traditional Chinese", "en": "English", "ja": "Japanese", "ko": "Korean"}
+
+
+def english_name(name):
+    """A language for a prompt written in English: the English name of the known ones, otherwise as the user wrote it."""
+    return _ENGLISH_NAMES.get(lang_code(name), (name or "").strip() or "English")
+
+
 def lang_label(name):
     """Language name for the prompt: a fixed form for known languages, otherwise as the user wrote it."""
     return _LANG_LABELS.get(lang_code(name), (name or "").strip() or "简体中文")
@@ -459,6 +481,8 @@ class Config:
     base_url: str = ""
     vision: str = "auto"           # auto / true / false
     company: str = "claude"        # which entry of COMPANIES this is (worked out from provider and base_url)
+    convert_hotkey: str = "Alt+1"
+    convert_language: str = "English"  # what the text selected in an input box is turned into
 
 
 def scrub_anthropic_env():
@@ -560,6 +584,8 @@ def load_config():
         company=company,
         capture_hotkey=get("hotkey", "capture", "Alt+~") or "Alt+~",
         toggle_hotkey=get("hotkey", "toggle_mode", "Ctrl+Alt+Y") or "Ctrl+Alt+Y",
+        convert_hotkey=get("hotkey", "convert", "Alt+1") or "Alt+1",
+        convert_language=(get("options", "convert_language", "English") or "English"),
         mode=mode,
         skip_chinese=flag("skip_chinese"),
         source_language=(get("options", "source_language", "auto").lower() if get("options", "source_language", "auto").lower() in ("auto", "en", "ja") else "auto"),

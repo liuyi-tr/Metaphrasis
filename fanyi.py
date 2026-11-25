@@ -789,6 +789,8 @@ class App:
         self.tray = None
         self.models = {}  # company -> model names fetched from its API, or "loading" / "failed"
         self.key_dialog = None
+        self.converting = False  # a text conversion (input box) is under way
+        self._convert_toast = None
 
     # ---------- startup / shutdown ----------
     def run(self):
@@ -824,7 +826,8 @@ class App:
     def _start_hotkeys(self):
         bindings = {}
         for name, text, default in (("capture", self.cfg.capture_hotkey, "Alt+~"),
-                                    ("toggle", self.cfg.toggle_hotkey, "Ctrl+Alt+Y")):
+                                    ("toggle", self.cfg.toggle_hotkey, "Ctrl+Alt+Y"),
+                                    ("convert", self.cfg.convert_hotkey, "Alt+1")):
             try:
                 mods, vk = winapi.parse_hotkey(text)
             except ValueError as e:
@@ -902,6 +905,11 @@ class App:
                 item(lambda it: t("切换快捷键：{hotkey}", hotkey=self.labels['toggle']), lambda icon, it: None, enabled=False),
             )),
             item(lambda it: t("译文语言"), pystray.Menu(*lang_items("target", lambda c: settings.lang_code(self.cfg.target_language) == c))),
+            item(lambda it: t("输入框转换成"), pystray.Menu(
+                *lang_items("convert", lambda c: settings.lang_code(self.cfg.convert_language) == c),
+                pystray.Menu.SEPARATOR,
+                item(lambda it: t("快捷键：{hotkey}", hotkey=self.labels['convert']), lambda icon, it: None, enabled=False),
+            )),
             item(lambda it: t("界面语言"), pystray.Menu(*lang_items("ui", lambda c: i18n.current() == c))),
             pystray.Menu.SEPARATOR,
             # the order one sets things up in: company first, then its key, and only then model and effort
@@ -954,6 +962,8 @@ class App:
                 self.start_capture()
             elif ev[1] == "toggle":
                 self.set_mode("popup" if self.mode == "overlay" else "overlay")
+            elif ev[1] == "convert":
+                self.start_convert()
             elif ev[1] == "esc" and isinstance(self.selection, SelectionWindow):
                 self.selection.close(None)
         elif kind == "hotkey_failed":
@@ -979,6 +989,8 @@ class App:
             self.set_mode(name[5:])
         elif name.startswith("target:"):
             self.set_target_language(name[7:])
+        elif name.startswith("convert:"):
+            self.set_convert_language(name[8:])
         elif name.startswith("ui:"):
             self.set_ui_language(name[3:])
         elif name.startswith("company:"):
@@ -1434,6 +1446,134 @@ class App:
         job = self.jobs.pop(job_id, None)
         if job is not None:
             self._close_job_windows(job)
+
+    # ---------- convert the text selected in an input box ----------
+    def set_convert_language(self, code):
+        """Language picked from the tray: write it to config.ini; applies from the next conversion."""
+        name = i18n.NAMES[code]
+        settings.set_option("convert_language", name)
+        self.cfg = dataclasses.replace(self.cfg, convert_language=name)
+        self.toast(t("输入框转换成：{name}", name=name))
+        if self.tray:
+            self.tray.update_menu()
+
+    def start_convert(self):
+        """Hotkey: what is selected in an input box is replaced, in place, by the same thing said in another language."""
+        if self.converting or self.selection is not None:
+            return
+        cfg = self._checked_config()
+        if cfg is None:
+            return
+        self.converting = True
+        key = self.hotkeys.bindings["convert"][2]
+        threading.Thread(target=self._convert, args=(cfg, self.root.winfo_id(), key), name="convert", daemon=True).start()
+
+    def _convert(self, cfg, owner, key):
+        """Background thread: is this an input box -> take its text -> the API rewords it -> put it in the text's place.
+
+        What is taken: the selection if there is one, otherwise everything in the box (the program selects it itself, so
+        the hands can stay on the keyboard). The program does the taking and the replacing; the API only sees the text
+        and only rewords it. Keys are sent only where Windows says text can be typed, and the replacement is real text
+        there (Ctrl+Z takes it back)."""
+        def ui(function, *args, **kw):
+            self.events.put(("call", lambda: function(*args, **kw)))
+
+        name = cfg.convert_language
+        session = None
+        try:
+            import inputbox
+            import translator
+            if not inputbox.wait_keys_up((key,)):
+                return  # the hotkey is still held down: keys sent now would combine with it
+            session = inputbox.Session()
+            kind, selection, whole = session.look(keep=True)  # the box is kept: the result goes back into this one
+            if kind == inputbox.PASSWORD:
+                return ui(self.toast, t("密码框里的内容不会读取，没有转换"))
+            if kind != inputbox.EDITABLE:
+                log.info("Convert: not an input box (%s)", kind)
+                return ui(self.toast, t("这里不是能输入文字的地方，没有转换"))
+            # with nothing selected the whole box is taken, but only a box known to hold a message: no key goes into
+            # a box that says it is empty, and a long document is never selected wholesale
+            whole_fits = bool(whole and whole.strip()) and len(whole) <= inputbox.MAX_CHARS
+            take_all = selection is not None and not selection.strip()  # the program says nothing is selected
+            if take_all and not whole_fits:
+                return ui(self.toast, self._nothing_to_convert(whole))
+            place = inputbox.focus_place()
+            previous = inputbox.snapshot(owner)
+            text = None if take_all else inputbox.copy_selection(owner)
+            if text is None and (take_all or (selection is None and whole_fits)):
+                # (second case: a box that cannot say what is selected, and Ctrl+C found nothing selected)
+                take_all = True
+                selection = inputbox.select_all(session)
+                if selection is None or selection.strip():  # go on once the box shows its text as selected (None: it cannot say)
+                    text = inputbox.copy_selection(owner)
+            if text is not None:
+                inputbox.restore(previous, owner)  # the clipboard is the user's again while the API works
+            if not text or not text.strip():
+                return ui(self.toast, t("没能取到选中的文字，没有转换") if selection or take_all else self._nothing_to_convert(whole))
+            if len(text) > inputbox.MAX_CHARS:
+                return ui(self.toast, t("选中的文字太长（超过 {n} 字），请分成几段转换", n=inputbox.MAX_CHARS))
+            ui(self._convert_note, t("正在转换成 {name}…", name=name))
+            started = time.perf_counter()
+            out, usage = translator.convert_text(cfg, text.strip().replace("\r\n", "\n"), settings.english_name(name))
+            if cfg.save_history:
+                try:
+                    settings.append_history(cfg.model, text, out)
+                except OSError:
+                    log.exception("Writing the history file failed")
+            log.info("Convert: %d -> %d chars, %.1fs (%s%s)", len(text), len(out), time.perf_counter() - started, cfg.model,
+                     f", tokens {usage.input_tokens}/{usage.output_tokens}" if usage else "")
+            # the spaces and line breaks around the selection stay as they were
+            out = out.replace("\r\n", "\n")
+            if "\r\n" in text:
+                out = out.replace("\n", "\r\n")
+            out = text[:len(text) - len(text.lstrip())] + out + text[len(text.rstrip()):]
+            # the user may have clicked elsewhere meanwhile: the result still goes into the box as long as the box holds what it held
+            how = inputbox.put_in_place(session, place, selection, out, owner, whole=whole if take_all else None)
+            if how:
+                if how == "back":
+                    log.info("Convert: the user had gone elsewhere; went back to the box, replaced, returned")
+                ui(self._convert_note, None)
+                time.sleep(1.0)  # the program reads the clipboard when it gets round to the paste: only then put the old content back
+                inputbox.restore(previous, owner)
+            else:
+                log.info("Convert: the box changed or could not be reached; copied instead of replacing")
+                inputbox.set_clipboard_text(out, owner)
+                ui(self.toast, t("没能放回原来的位置，转换结果已复制，按 Ctrl+V 粘贴"))
+        except translator.TranslateError as e:
+            log.warning("Convert failed: %s", e)
+            ui(self.show_error, str(e), open_config=e.open_config)
+        except Exception as e:
+            log.exception("Convert crashed")
+            ui(self.show_error, t("转换时出错：{e}\n（详细信息见 运行日志.txt）", e=e))
+        finally:
+            if session:
+                session.close()
+            ui(self._convert_finished)
+
+    def _nothing_to_convert(self, whole):
+        """Why nothing was taken, from what the box holds (None = it does not say)."""
+        if whole is None:
+            return t("先选中要转换的文字，再按 {hotkey}", hotkey=self.labels["convert"])
+        if not whole.strip():
+            return t("输入框里还没有字，没有转换")
+        import inputbox
+        return t("输入框里的字太多（超过 {n} 字），请先选中要转换的那一段", n=inputbox.MAX_CHARS)
+
+    def _convert_note(self, text):
+        """The small "working on it" note; None takes it away."""
+        if self._convert_toast and self._convert_toast.alive:
+            self._convert_toast.close()
+        self._convert_toast = None
+        if text:
+            self.toast(text, seconds=60)
+            self._convert_toast = self._toast
+
+    def _convert_finished(self):
+        self.converting = False
+        if self._convert_toast and self._convert_toast is not self._toast:
+            self._convert_toast = None  # another message has taken its place
+        self._convert_note(None)
 
     # ---------- UI helpers ----------
     def set_mode(self, mode):
