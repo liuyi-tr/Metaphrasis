@@ -242,6 +242,7 @@ settings.py     配置、记录
 i18n.py         界面文字的五种语言
 appicon.py      图标，是用代码画出来的，没有图片文件
 tools/          打包便携版的脚本
+tests/          开发时用的检查脚本：python tests\run_all.py（不需要 Key，不联网）
 其它 .py        小工具
 ```
 

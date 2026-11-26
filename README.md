@@ -242,6 +242,7 @@ settings.py     config, history
 i18n.py         interface strings in five languages
 appicon.py      the icon, drawn in code (there is no picture file)
 tools/          script that builds the portable zip
+tests/          the checks the program was developed against: python tests\run_all.py (no key needed, nothing is sent)
 other .py       small helpers
 ```
 
