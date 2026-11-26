@@ -1696,7 +1696,7 @@ class App:
             if kind == inputbox.PASSWORD:
                 return say(t("密码框里的内容不会读取，没有转换"))
             if kind != inputbox.EDITABLE:
-                log.info("Convert: not an input box (%s)", kind)
+                log.info("Convert: not an input box (%s: %s)", kind, session.seen)
                 return say(t("这里不是能输入文字的地方，没有转换"))
             # with nothing selected the whole box is taken, but only a box known to hold a message: no key goes into
             # a box that says it is empty, and a long document is never selected wholesale

@@ -201,6 +201,15 @@ def classify(found):
     return UNKNOWN  # a button, a list, a picture, a page, or a program that tells Windows nothing: not known to be a place to type
 
 
+def _facts(found):
+    """What _describe() found, for the log: the kind of place and the sizes of its text, never a word of the text."""
+    def size(text):
+        return None if text is None else len(text)
+    return ("type %s, class %r, window %r, value %s (read-only %s), text read-only %s, %s chars selected of %s" % (
+        found["type"], (found["class"] or "")[:60], found.get("window"), found["has_value"], found["value_read_only"],
+        found["read_only"], size(found["selection"]), size(found["whole"])))
+
+
 Focus = namedtuple("Focus", "kind selection whole")  # selection / whole: None when the program does not let them be read
 _NOTHING = Focus(UNKNOWN, None, None)
 
@@ -220,6 +229,7 @@ class Session:
     def __init__(self):
         self._tasks = queue.Queue()
         self._silent = False  # the program did not answer in time
+        self.seen = None  # what the last look found, for the log (no text in it)
         self._automation = self._box = self._away = None  # COM objects; touched on the session thread only
         threading.Thread(target=self._run, name="uia", daemon=True).start()
 
@@ -271,6 +281,7 @@ class Session:
             return None
         found = _describe(element)
         found["window"] = _window_class(user32.GetForegroundWindow())
+        self.seen = _facts(found)
         if keep and classify(found) == EDITABLE:
             _release(self._box)
             self._box = element
@@ -299,6 +310,7 @@ class Session:
 
         Browsers and apps built on them only describe their content once somebody has asked, so the first answer can
         be an empty one: ask again a moment later. keep: if it is an input box, hold on to it as "the box"."""
+        settle_native_focus()  # (left on a page's hidden window, the answer would be about that page only)
         focus = _NOTHING
         for attempt in range(tries):
             if attempt:
@@ -321,10 +333,16 @@ class Session:
         self._ask(self._mark)
 
     def focus_box(self):
-        return bool(self._ask(lambda: bool(self._box) and _method(self._box, _SET_FOCUS)() >= 0))
+        """Give the kept box the keyboard."""
+        done = bool(self._ask(lambda: bool(self._box) and _method(self._box, _SET_FOCUS)() >= 0))
+        settle_native_focus()  # (UI Automation's SetFocus leaves it on the page's hidden window)
+        return done
 
     def focus_away(self):
-        return bool(self._ask(lambda: bool(self._away) and _method(self._away, _SET_FOCUS)() >= 0))
+        """Give the keyboard back to the place remembered with mark_away()."""
+        done = bool(self._ask(lambda: bool(self._away) and _method(self._away, _SET_FOCUS)() >= 0))
+        settle_native_focus()
+        return done
 
     def close(self):
         self._tasks.put(None)
@@ -363,12 +381,66 @@ def _window_class(window):
     return name.value if window and user32.GetClassNameW(window, name, 256) else ""
 
 
+def _keyboard_window(window):
+    """The window that has the keyboard in the program `window` belongs to, as Windows itself records it."""
+    info = GUITHREADINFO(cbSize=ctypes.sizeof(GUITHREADINFO))
+    user32.GetGUIThreadInfo(user32.GetWindowThreadProcessId(window, None), ctypes.byref(info))
+    return info.hwndFocus
+
+
 def focus_place():
     """(foreground window, focused child window): compared before and after, to notice that the user went somewhere else."""
     window = user32.GetForegroundWindow()
-    info = GUITHREADINFO(cbSize=ctypes.sizeof(GUITHREADINFO))
-    user32.GetGUIThreadInfo(user32.GetWindowThreadProcessId(window, None), ctypes.byref(info))
-    return window, info.hwndFocus
+    return window, _keyboard_window(window)
+
+
+user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+user32.GetAncestor.restype = wintypes.HWND
+user32.SetFocus.argtypes = [wintypes.HWND]
+user32.SetFocus.restype = wintypes.HWND
+user32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
+kernel32.GetCurrentThreadId.restype = wintypes.DWORD
+_PAGE_WINDOW = "Chrome_RenderWidgetHostHWND"  # the hidden window each page has in a program built on Chromium
+
+
+def _parent_window(window):
+    return user32.GetAncestor(window, 1)  # GA_PARENT
+
+
+def _give_keyboard(window):
+    """Make `window` the one that has the keyboard in its own program. Windows lets a thread do that for its own
+    windows only, so ours joins theirs for the moment."""
+    theirs, mine = user32.GetWindowThreadProcessId(window, None), kernel32.GetCurrentThreadId()
+    joined = bool(theirs and theirs != mine and user32.AttachThreadInput(mine, theirs, True))
+    try:
+        user32.SetFocus(window)
+    finally:
+        if joined:
+            user32.AttachThreadInput(mine, theirs, False)
+    return _keyboard_window(window) == window
+
+
+def settle_native_focus(window=None):
+    """Take the keyboard, as Windows itself records it, off a page's hidden window and give it back to the window the
+    page is in (window: the program's window; the one in front when not given). True when that was needed.
+
+    In programs built on Chromium (browsers, Electron apps) the main window has the keyboard and hands the keys on to
+    whichever of its pages is the active one; each page also has a hidden window of its own, which never has it.
+    UI Automation's SetFocus(), which is how the box is given the keyboard back, leaves the keyboard on the hidden
+    window of that page. Typing goes on working, but from then on UI Automation answers "what has the keyboard?" from
+    that one page's point of view, whichever page the user clicks into afterwards: an input box in another page of the
+    same window (the chat box next to a browser pane, say) is then taken for a place that cannot be typed into, and
+    the other way round. So it is put right before asking, and after each SetFocus() of our own."""
+    window = window or user32.GetForegroundWindow()
+    held = _keyboard_window(window) if window else None
+    if not held or _window_class(held) != _PAGE_WINDOW:
+        return False
+    parent = _parent_window(held)
+    if not parent:
+        return False
+    if not _give_keyboard(parent):
+        log.info("The keyboard was on a page's hidden window and could not be given back to the window it is in")
+    return True
 
 
 def wait_keys_up(extra=(), timeout=2.0):

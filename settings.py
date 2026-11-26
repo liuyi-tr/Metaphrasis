@@ -14,7 +14,7 @@ import redact
 from i18n import t
 
 APP_NAME = "Metaphrasis"  # what the program calls itself: the same in every interface language
-VERSION = "1.1.0"  # shown in the tray menu; tools/build_portable.py names the zip after it
+VERSION = "1.1.1"  # shown in the tray menu; tools/build_portable.py names the zip after it
 APP_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = APP_DIR / "config.ini"
 HISTORY_PATH = APP_DIR / "翻译记录.txt"
