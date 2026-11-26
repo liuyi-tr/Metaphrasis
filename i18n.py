@@ -283,4 +283,9 @@ STRINGS = {
         "en": "(text the local OCR does not support, e.g. Japanese: the source was read from the screenshot by the model)",
         "ja": "（日本語などローカル OCR が対応していない文字：原文はモデルがスクリーンショットから直接読み取り）",
         "ko": "(일본어 등 로컬 OCR이 지원하지 않는 텍스트: 원문은 모델이 스크린샷에서 직접 읽음)"},
+    "（OCR 没有识别出原文，译文由模型直接从截图读取）": {
+        "zh-tw": "（OCR 沒有辨識出原文，譯文由模型直接從截圖讀取）",
+        "en": "(the OCR found no text: the translation was read from the screenshot by the model)",
+        "ja": "（OCR で原文を認識できませんでした：訳文はモデルがスクリーンショットから直接読み取り）",
+        "ko": "(OCR이 원문을 인식하지 못함: 번역문은 모델이 스크린샷에서 직접 읽음)"},
 }

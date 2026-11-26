@@ -14,7 +14,7 @@ import redact
 from i18n import t
 
 APP_NAME = "Metaphrasis"  # what the program calls itself: the same in every interface language
-VERSION = "1.1.1"  # shown in the tray menu; tools/build_portable.py names the zip after it
+VERSION = "1.1.2"  # shown in the tray menu; tools/build_portable.py names the zip after it
 APP_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = APP_DIR / "config.ini"
 HISTORY_PATH = APP_DIR / "翻译记录.txt"
@@ -483,7 +483,7 @@ def localize_config_comments(lang):
             changed += 1
     if changed:
         out = "".join(c + e for c, e in zip(parts, ends))
-        CONFIG_PATH.write_bytes((codecs.BOM_UTF8 if bom else b"") + out.encode("utf-8"))
+        _save_config((codecs.BOM_UTF8 if bom else b"") + out.encode("utf-8"))
     return changed
 
 
@@ -580,10 +580,43 @@ def _encoding_to_add_in(data):
     return "utf-8"
 
 
+def _spare_path(target):
+    return target.with_name(target.name + ".tmp")
+
+
+def _save_config(data):
+    """Write the settings file, whole or not at all: into a spare file next to it first, which then takes its place
+    in one step. A program that is ended in the middle of a save (a restart, a power cut) leaves the file as it was,
+    not half a file with every company's key gone.
+
+    When the file cannot be swapped (another program holds it open) it is written into directly, as it used to be."""
+    target = Path(os.path.realpath(CONFIG_PATH))  # (a link to a file kept somewhere else stays a link)
+    spare = _spare_path(target)
+    try:
+        with open(spare, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(spare, target)
+    except PermissionError:
+        target.write_bytes(data)
+        _clear_spare()
+
+
+def _clear_spare():
+    """Remove a spare file left behind by a save that never finished: it is not read, and it holds the keys."""
+    try:
+        _spare_path(Path(os.path.realpath(CONFIG_PATH))).unlink()
+    except OSError:
+        pass
+
+
 def ensure_files():
+    _clear_spare()
     if not CONFIG_PATH.exists():  # first run: comments in the system language (Chinese / English), target language defaults to the system language
         sys_lang = i18n.system_language()
-        CONFIG_PATH.write_text(default_config(config_language(sys_lang), i18n.NAMES.get(sys_lang)), encoding="utf-8")
+        text = default_config(config_language(sys_lang), i18n.NAMES.get(sys_lang))
+        _save_config(text.replace("\n", os.linesep).encode("utf-8"))
 
 
 def load_config():
@@ -612,8 +645,8 @@ def load_config():
         try:  # added at the end as the file itself is written: its encoding and its line endings
             nl = "\r\n" if "\r\n" in text else "\n"
             piece = (("" if text.endswith("\n") or not text else "\n") + addition).replace("\n", nl)
-            with open(CONFIG_PATH, "ab") as f:
-                f.write(piece.encode(_encoding_to_add_in(CONFIG_PATH.read_bytes()), errors="replace"))
+            held = CONFIG_PATH.read_bytes()
+            _save_config(held + piece.encode(_encoding_to_add_in(held), errors="replace"))
             text = read_text(CONFIG_PATH)
         except OSError:
             pass
@@ -736,7 +769,7 @@ def _read_config():
 
 
 def _write_config(text, bom):
-    CONFIG_PATH.write_bytes((codecs.BOM_UTF8 if bom else b"") + text.encode("utf-8"))
+    _save_config((codecs.BOM_UTF8 if bom else b"") + text.encode("utf-8"))
 
 
 def _find(text, name):
@@ -892,7 +925,7 @@ def set_option(key, value):
         text = text.replace("[options]", "[options]" + nl + line, 1)
     else:
         text = text.rstrip("\r\n") + nl + nl + "[options]" + nl + line + nl
-    CONFIG_PATH.write_bytes((codecs.BOM_UTF8 if bom else b"") + text.encode("utf-8"))
+    _write_config(text, bom)
 
 
 def _is_local_address(url):

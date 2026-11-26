@@ -10,3 +10,6 @@ config.ini
 保存的译文/
 *.log
 icon.ico
+
+# 保存到一半时用的临时文件（里面也有 Key）
+config.ini.tmp

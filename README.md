@@ -118,6 +118,8 @@ All three are in the tray menu, and they are set up in that order: provider firs
 
 The key is shown as dots unless you tick Show, so a screenshot of the box does not give it away. Each provider keeps its own key, model and effort in `config.ini`. Switching puts the outgoing provider's settings aside and brings the incoming one's back, so a key is never sent to a company it does not belong to.
 
+The keys are stored in `config.ini` as plain text. So do not zip up the whole program folder and hand it to someone: take `config.ini` out first (if you switched records on, the translation history is in that folder too).
+
 **Model.** Claude has a fixed list of five. For the other providers the list is asked of the provider itself once its key is saved (a free request), so it shows what your account can actually use. If the model you want is not listed, or the list could not be fetched, click **Type a model name…** at the bottom of the Model menu and type the name into the small box that opens; no restart needed. A wrong name does no harm: the first time it is used the provider says there is no such model, and the program tells you.
 
 <p align="center"><img src="docs/model_dialog.png" width="380"></p>

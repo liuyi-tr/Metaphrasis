@@ -21,7 +21,7 @@ body:
     attributes:
       label: Version / 版本
       description: Right-click the tray icon; the grey line near the bottom. 右键托盘图标，靠下那行灰色的字。
-      placeholder: "1.1.1"
+      placeholder: "1.1.2"
     validations:
       required: true
   - type: dropdown

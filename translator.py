@@ -102,6 +102,10 @@ class TranslateError(Exception):
         self.open_config = open_config
 
 
+class ModelUnavailable(TranslateError):
+    """The model that was asked for does not exist (any more), or the key may not use it."""
+
+
 class Cancelled(Exception):
     """Esc pressed: abort the request so nothing more is generated (or billed)."""
 
@@ -222,10 +226,13 @@ JSON_NOTE = ('\n\n输出格式：只输出一个 JSON 对象，不要任何多�
 class _Resp:
     """Shape an OpenAI-compatible result like a Claude response so the parsing code stays single."""
 
-    def __init__(self, text, stop_reason):
+    def __init__(self, text, stop_reason, used=None):
         self.content = [types.SimpleNamespace(type="text", text=text)] if text else []
         self.stop_reason = stop_reason
-        self.usage = types.SimpleNamespace(input_tokens=0, output_tokens=0)
+        # what the provider said it used. Not every provider says, when the answer is streamed: None then, not a made-up 0
+        counted = isinstance(used, dict) and (used.get("prompt_tokens") or used.get("completion_tokens"))
+        self.usage = types.SimpleNamespace(input_tokens=int(used.get("prompt_tokens") or 0),
+                                           output_tokens=int(used.get("completion_tokens") or 0)) if counted else None
 
 
 def _openai_client(cfg):
@@ -395,7 +402,7 @@ def _call_openai(cfg, params, on_text, plain=False, alive=None):
                     _think_instead[remembered] = think
                 if lowered:
                     _limit_known[model] = limit
-                text, finish = "", None
+                text, finish, used = "", None, None
                 for line in r.iter_lines():
                     if alive:
                         alive()
@@ -408,6 +415,7 @@ def _call_openai(cfg, params, on_text, plain=False, alive=None):
                         chunk = json.loads(data)
                     except ValueError:
                         continue
+                    used = chunk.get("usage") or used  # (in a piece of its own at the end, where it is sent at all)
                     for ch in chunk.get("choices") or []:
                         delta = (ch.get("delta") or {}).get("content")
                         if delta:
@@ -415,8 +423,9 @@ def _call_openai(cfg, params, on_text, plain=False, alive=None):
                             on_text(clean(text))
                         if ch.get("finish_reason"):
                             finish = ch["finish_reason"]
+                        used = ch.get("usage") or used  # (some providers put it with the last piece of the answer)
                 stop = {"stop": "end_turn", "length": "max_tokens", "content_filter": "refusal"}.get(finish or "stop", "end_turn")
-                return _Resp(clean(text), stop)
+                return _Resp(clean(text), stop, used)
         except httpx2.TimeoutException as e:
             raise TranslateError(t("连接接口超时，请检查网络（必要时在 config.ini 里设置 proxy）。")) from e
         except httpx2.HTTPError as e:
@@ -452,6 +461,29 @@ def list_models(cfg, limit=40):
     return sorted(set(names))[:limit]
 
 
+_unavailable = set()  # models found gone, or not allowed for the key, during this run: not asked for a second time
+
+
+def _other_model(cfg):
+    """The model a request that the safety filter refused is tried again on, or None when there is none to try.
+    Only with Claude, whose models differ in this (Fable's filter is the strictest, Sonnet's looser)."""
+    if getattr(cfg, "provider", "claude") != "claude" or cfg.model == RETRY_MODEL or RETRY_MODEL in _unavailable:
+        return None
+    return RETRY_MODEL
+
+
+def _again_on(cfg, params, model, on_text, **how):
+    """The same request on another model. None when that model cannot be had: one day it will have been withdrawn,
+    and a key may be limited to certain models. The caller then goes on as if there were no such model, and the
+    error the user would otherwise see (about a model they never chose) is not raised."""
+    try:
+        return _call(cfg, dict(params, model=model), on_text, **how)
+    except ModelUnavailable:
+        _unavailable.add(model)
+        log.warning("The model for a second try after a refusal (%s) cannot be used with this key; going on without it", model)
+        return None
+
+
 def _call(cfg, params, on_text, plain=False, alive=None):
     if getattr(cfg, "provider", "claude") == "openai":
         return _call_openai(cfg, params, on_text, plain, alive)
@@ -461,10 +493,10 @@ def _call(cfg, params, on_text, plain=False, alive=None):
         return _stream(_client(cfg), params, on_text, alive)
     except anthropic.AuthenticationError as e:
         raise TranslateError(t("API Key 无效或已被停用，请检查 config.ini 里的 api_key。"), True) from e
-    except anthropic.PermissionDeniedError as e:
-        raise TranslateError(t("这个 API Key 没有权限使用模型 {model}：{msg}", model=cfg.model, msg=e.message), True) from e
+    except anthropic.PermissionDeniedError as e:  # (the model named is the one this request asked for: not always the one in the settings)
+        raise ModelUnavailable(t("这个 API Key 没有权限使用模型 {model}：{msg}", model=params["model"], msg=e.message), True) from e
     except anthropic.NotFoundError as e:
-        raise TranslateError(t("找不到模型 {model}，请检查 config.ini 里的 model。", model=cfg.model), True) from e
+        raise ModelUnavailable(t("找不到模型 {model}，请检查 config.ini 里的 model。", model=params["model"]), True) from e
     except anthropic.RateLimitError as e:
         raise TranslateError(t("请求太频繁或账户额度不足，请稍后再试，或到 Claude 控制台查看用量。")) from e
     except anthropic.BadRequestError as e:
@@ -516,7 +548,7 @@ def _parse(resp, lines):
 
 def source_text(lines, blocks):
     if not lines:
-        return "（OCR 没有识别出原文，译文由 Claude 直接从截图读取）"
+        return t("（OCR 没有识别出原文，译文由模型直接从截图读取）")
     by_id = {l.id: l for l in lines}
     chunks = [" ".join(by_id[i].text for i in b.line_ids) for b in blocks if b.line_ids]
     leftover = [l.text for l in lines if not any(l.id in b.line_ids for b in blocks)]
@@ -562,6 +594,9 @@ def _mask_lines(lines):
     return masked, table
 
 
+_HAN_OR_KANA = re.compile("[ぁ-ヿ㐀-鿿]")  # a Chinese character or a Japanese kana
+
+
 def _restore_blocks(blocks, table, masked):
     """Put the originals back for the placeholders; any the model dropped are appended to the block."""
     if not table:
@@ -572,8 +607,9 @@ def _restore_blocks(blocks, table, masked):
         text = PLACEHOLDER_RE.sub(lambda m: table.get(f"⟦{m.group(1)}⟧", m.group(0)), b.translation)
         expected = dict.fromkeys(k for lid in b.line_ids for k in PLACEHOLDER_RE.findall(by_id.get(lid, "")))
         missing = [table[f"⟦{k}⟧"] for k in expected if f"⟦{k}⟧" in table and table[f"⟦{k}⟧"] not in text]
-        if missing:
-            text += "（" + "、".join(missing) + "）"
+        if missing:  # in the punctuation of the translation: Chinese and Japanese have brackets and a comma of their own
+            wide = _HAN_OR_KANA.search(PLACEHOLDER_RE.sub("", b.translation))
+            text += ("（" + "、".join(missing) + "）") if wide else (" (" + ", ".join(missing) + ")")
         out.append(Block(b.line_ids, text))
     return out
 
@@ -656,10 +692,14 @@ def translate(cfg, image, lines, on_progress=None, cancelled=None, unreliable=Fa
         # safety-filter false positive (common with keys, passwords, permissions): retry on a model with a looser filter;
         # then without the screenshot, text only; then in small chunks, marking only the blocked one
         # switching models only makes sense for Claude (Fable is strictest, Sonnet looser); other APIs go straight to the next step
-        alt = RETRY_MODEL if (getattr(cfg, "provider", "claude") == "claude" and cfg.model != RETRY_MODEL) else None
+        alt = _other_model(cfg)
         log.warning("Safety filter refused (%s)%s; %d OCR lines", cfg.model, f", retrying on {alt}" if alt else "", len(lines))
         if alt:
-            resp = _call(cfg, dict(params, model=alt), on_text)
+            again = _again_on(cfg, params, alt, on_text)
+            if again is None:
+                alt = None  # the steps below go on with the model that was chosen
+            else:
+                resp = again
         if resp.stop_reason == "refusal" and lines and not unreliable:  # Japanese is read from the screenshot; without it there is nothing to translate
             log.warning("Still refused; retrying with text only (no screenshot)")
             text_only = dict(params, model=alt or cfg.model, messages=[{
@@ -735,9 +775,10 @@ def convert_text(cfg, text, language, cancelled=None):
     if claude:
         params["output_config"] = {"effort": cfg.effort}
     resp = _call(cfg, params, lambda _: None, plain=True, alive=alive)
-    if resp.stop_reason == "refusal" and claude and cfg.model != RETRY_MODEL:
-        log.warning("Safety filter refused a text conversion (%s); retrying on %s", cfg.model, RETRY_MODEL)
-        resp = _call(cfg, dict(params, model=RETRY_MODEL), lambda _: None, plain=True, alive=alive)
+    alt = _other_model(cfg) if resp.stop_reason == "refusal" else None
+    if alt:
+        log.warning("Safety filter refused a text conversion (%s); retrying on %s", cfg.model, alt)
+        resp = _again_on(cfg, params, alt, lambda _: None, plain=True, alive=alive) or resp
     if resp.stop_reason == "refusal":
         raise TranslateError(t("安全过滤拒绝了这段文字（多半是误判），没有转换。"))
     if resp.stop_reason == "max_tokens":
